@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: readable-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: readable
+      POSTGRES_PASSWORD: readable_dev_2024_28
+      POSTGRES_DB: readable_db
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - readable_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  readable_postgres_data:

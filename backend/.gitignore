@@ -1,0 +1,5 @@
+# Specifies files and directories that Git should ignore (node_modules, .env, build output)
+node_modules/
+.env
+dist/
+build/
