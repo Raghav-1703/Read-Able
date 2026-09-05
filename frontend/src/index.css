@@ -1,0 +1,69 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+@custom-variant dark (&:is(.dark *));
+@custom-variant lowlight (&:is(.lowlight *));
+/* ... (shadcn theme tokens as generated) ... */
+/* ---- ReadAble design system ---- */
+@theme inline {
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-soft: var(--brand-soft);
+  --color-surface: var(--surface);
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+:root {
+  --radius: 1rem;
+  --background: oklch(0.976 0.012 85);          /* cream */
+  --foreground: oklch(0.22 0.02 160);           /* deep green-charcoal */
+  --surface: oklch(0.995 0.006 90);
+  --card: oklch(0.995 0.006 90);
+  --card-foreground: oklch(0.22 0.02 160);
+  --brand: oklch(0.42 0.078 178);               /* teal */
+  --brand-foreground: oklch(0.985 0.01 170);
+  --brand-soft: oklch(0.9 0.055 172);
+  --primary: oklch(0.42 0.078 178);
+  --primary-foreground: oklch(0.985 0.01 170);
+  --secondary: oklch(0.945 0.017 85);
+  --secondary-foreground: oklch(0.3 0.03 170);
+  --muted: oklch(0.945 0.017 85);
+  --muted-foreground: oklch(0.48 0.02 160);
+  --accent: oklch(0.9 0.055 172);
+  --accent-foreground: oklch(0.3 0.05 175);
+  --border: oklch(0.9 0.018 85);
+  --input: oklch(0.9 0.018 85);
+  --ring: oklch(0.42 0.078 178);
+}
+.lowlight {
+  --background: oklch(0.21 0.014 175);          /* dark charcoal-teal */
+  --foreground: oklch(0.93 0.012 90);
+  --surface: oklch(0.26 0.016 175);
+  --card: oklch(0.26 0.016 175);
+  --card-foreground: oklch(0.93 0.012 90);
+  --brand: oklch(0.72 0.09 175);                /* lighter teal for contrast */
+  --brand-foreground: oklch(0.19 0.02 175);
+  --brand-soft: oklch(0.36 0.05 175);
+  --primary: oklch(0.72 0.09 175);
+  --primary-foreground: oklch(0.19 0.02 175);
+  --secondary: oklch(0.3 0.016 175);
+  --secondary-foreground: oklch(0.93 0.012 90);
+  --muted: oklch(0.3 0.016 175);
+  --muted-foreground: oklch(0.75 0.014 90);
+  --accent: oklch(0.36 0.05 175);
+  --accent-foreground: oklch(0.93 0.012 90);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.72 0.09 175);
+}
+@layer base {
+  html {
+    font-size: calc(16px * var(--read-scale, 1));   /* − / + text size */
+  }
+  body {
+    font-family: var(--font-sans);
+    line-height: var(--read-leading, 1.6);          /* comfortable spacing */
+    letter-spacing: var(--read-tracking, 0em);
+    word-spacing: var(--read-word-spacing, normal);
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+}
