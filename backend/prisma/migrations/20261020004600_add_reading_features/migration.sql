@@ -2,8 +2,8 @@
 CREATE TYPE "HighlightColor" AS ENUM ('RED', 'YELLOW');
 
 -- AlterTable
-ALTER TABLE "User" ADD COLUMN     "phone" TEXT,
-ALTER COLUMN "email" DROP NOT NULL;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "phone" TEXT;
+ALTER TABLE "User" ALTER COLUMN "email" DROP NOT NULL;
 
 -- CreateTable
 CREATE TABLE "ReadingProgress" (
@@ -53,7 +53,7 @@ CREATE INDEX "Note_userId_documentId_idx" ON "Note"("userId", "documentId");
 CREATE INDEX "Highlight_userId_documentId_idx" ON "Highlight"("userId", "documentId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "User_phone_key" ON "User"("phone");
+CREATE UNIQUE INDEX IF NOT EXISTS "User_phone_key" ON "User"("phone");
 
 -- AddForeignKey
 ALTER TABLE "ReadingProgress" ADD CONSTRAINT "ReadingProgress_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE;
