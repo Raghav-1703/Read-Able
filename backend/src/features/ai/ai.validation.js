@@ -1,7 +1,7 @@
 import { ValidationError } from "../../shared/utils/errors.js";
 
 const VALID_ACTIONS = ["EXPLAIN", "SUMMARIZE", "DEFINE"];
-const VALID_LEVELS = ["SIMPLE", "INTERMEDIATE", "TECHNICAL"];
+const VALID_LEVELS = ["SIMPLE", "TECHNICAL"];
 const MAX_TEXT_LENGTH = 5000;
 
 /**
@@ -9,7 +9,7 @@ const MAX_TEXT_LENGTH = 5000;
  *
  * @param {Object} body
  * @param {string} body.action - EXPLAIN | SUMMARIZE | DEFINE
- * @param {string} body.level - SIMPLE | INTERMEDIATE | TECHNICAL
+ * @param {string} body.level - SIMPLE | TECHNICAL
  * @param {string} body.text - Selected passage text (max 5000 chars)
  * @returns {{ action: string, level: string, text: string }}
  */

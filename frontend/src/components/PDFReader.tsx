@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PDFReader.tsx
  *
  * Core Document Reading Experience with Phase 3 Reading Features:
@@ -23,7 +23,7 @@ import {
   type ReaderViewMode,
 } from "@/lib/readerSettings";
 import { useReadingSession } from "@/lib/useReadingSession";
-import { documentApi, type HighlightRecord } from "@/lib/api";
+import { documentApi, aiApi, type HighlightRecord, type AiAction, type AiLevel } from "@/lib/api";
 
 // Setup pdf.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -113,6 +113,30 @@ export default function PDFReader({ source }: PDFReaderProps) {
   // Highlight menu dropdown & Toast state
   const [highlightMenuOpen, setHighlightMenuOpen] = useState(false);
   const highlightMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // AI Assistant state & refs
+  const [sidebarTab, setSidebarTab] = useState<"notes" | "ai">("notes");
+  const [aiDropdown, setAiDropdown] = useState<{
+    text: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  const aiDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [aiState, setAiState] = useState<{
+    status: "idle" | "loading" | "success" | "error";
+    action: AiAction | null;
+    text: string;
+    answer: string | null;
+    error: string | null;
+  }>({
+    status: "idle",
+    action: null,
+    text: "",
+    answer: null,
+    error: null,
+  });
+
+  const [aiLevel, setAiLevel] = useState<AiLevel>("SIMPLE");
 
   const [toastMsg, setToastMsg] = useState<string>("");
   const [toastVisible, setToastVisible] = useState<boolean>(false);
@@ -408,12 +432,15 @@ export default function PDFReader({ source }: PDFReaderProps) {
     handleDeleteHighlights,
   ]);
 
-  // Click outside listener for highlight menu & popup
+  // Click outside listener for highlight menu & popup & AI dropdown
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null;
       if (!highlightMenuRef.current?.contains(target)) {
         setHighlightMenuOpen(false);
+      }
+      if (aiDropdownRef.current && !aiDropdownRef.current.contains(target)) {
+        setAiDropdown(null);
       }
       if (target?.closest(".highlight-popup")) {
         return;
@@ -426,6 +453,116 @@ export default function PDFReader({ source }: PDFReaderProps) {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [setActiveHighlightPopup]);
+
+  // AI Assistant Action trigger
+  const handleAiAction = useCallback(
+    async (action: AiAction, text: string, level?: AiLevel) => {
+      const effectiveLevel = level ?? aiLevel;
+      setAiDropdown(null);
+      setSidebarTab("ai");
+      setNotesPanelOpen(true);
+      setAiState({
+        status: "loading",
+        action,
+        text,
+        answer: null,
+        error: null,
+      });
+
+      try {
+        const res = await aiApi.query(source.documentId, {
+          action,
+          level: effectiveLevel,
+          text,
+        });
+
+        const answer =
+          res.data?.data?.answer || res.data?.data?.result || "No answer received.";
+
+        setAiState({
+          status: "success",
+          action,
+          text,
+          answer,
+          error: null,
+        });
+      } catch (err: any) {
+        const errMsg =
+          err?.response?.data?.message ||
+          err?.message ||
+          "Failed to get AI response. Please try again.";
+        setAiState({
+          status: "error",
+          action,
+          text,
+          answer: null,
+          error: errMsg,
+        });
+      }
+    },
+    [source.documentId, setNotesPanelOpen, aiLevel]
+  );
+
+  // General text selection detection for AI dropdown (works in both Text and PDF mode)
+  const handleSelectionDetection = useCallback(
+    (e?: React.SyntheticEvent) => {
+      // If user is actively highlighting in text view, let highlight handler run
+      if (activeViewMode === "text" && highlightMode !== "OFF") {
+        handleTextSelection();
+        return;
+      }
+
+      // If clicking inside the AI dropdown itself, keep it open
+      if (aiDropdownRef.current?.contains(e?.target as Node)) {
+        return;
+      }
+
+      const selection = window.getSelection();
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+        setAiDropdown(null);
+        return;
+      }
+
+      const selectedText = selection.toString().trim();
+      if (!selectedText) {
+        setAiDropdown(null);
+        return;
+      }
+
+      const mainCanvas = mainCanvasRef.current;
+      if (!mainCanvas) return;
+
+      const range = selection.getRangeAt(0);
+      if (!mainCanvas.contains(range.commonAncestorContainer)) {
+        setAiDropdown(null);
+        return;
+      }
+
+      const rect = range.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) {
+        setAiDropdown(null);
+        return;
+      }
+
+      // Position floating dropdown above selection (or below if too close to top)
+      const popupWidth = 270;
+      const popupHeight = 44;
+      let top = rect.top - popupHeight - 8;
+      if (top < 64) {
+        top = rect.bottom + 8;
+      }
+
+      let left = rect.left + rect.width / 2 - popupWidth / 2;
+      left = Math.max(12, Math.min(window.innerWidth - popupWidth - 12, left));
+
+      setAiDropdown({
+        text: selectedText,
+        top,
+        left,
+      });
+    },
+    [activeViewMode, highlightMode, handleTextSelection]
+  );
 
   // Page input submission (Requirement 5)
   const handlePageInputSubmit = (e: React.FormEvent) => {
@@ -452,8 +589,8 @@ export default function PDFReader({ source }: PDFReaderProps) {
         overflow: "hidden",
         position: "relative",
       }}
-      onMouseUp={activeViewMode === "text" ? handleTextSelection : undefined}
-      onTouchEnd={activeViewMode === "text" ? handleTextSelection : undefined}
+      onMouseUp={handleSelectionDetection}
+      onTouchEnd={handleSelectionDetection}
     >
       {/* -------------------------------------------------------------------- */}
       {/* Top Navigation & Toolbar                                             */}
@@ -611,12 +748,19 @@ export default function PDFReader({ source }: PDFReaderProps) {
           {/* Notes Panel Toggle Button */}
           <button
             type="button"
-            onClick={() => setNotesPanelOpen((v) => !v)}
+            onClick={() => {
+              if (notesPanelOpen && sidebarTab === "notes") {
+                setNotesPanelOpen(false);
+              } else {
+                setNotesPanelOpen(true);
+                setSidebarTab("notes");
+              }
+            }}
             title="Toggle Notes Panel"
             style={{
-              background: notesPanelOpen ? themeColors.accentTint : themeColors.btnBg,
-              border: `1px solid ${notesPanelOpen ? themeColors.accent : themeColors.border}`,
-              color: notesPanelOpen ? themeColors.accent : themeColors.text,
+              background: notesPanelOpen && sidebarTab === "notes" ? themeColors.accentTint : themeColors.btnBg,
+              border: `1px solid ${notesPanelOpen && sidebarTab === "notes" ? themeColors.accent : themeColors.border}`,
+              color: notesPanelOpen && sidebarTab === "notes" ? themeColors.accent : themeColors.text,
               borderRadius: 8,
               padding: "6px 10px",
               fontSize: "0.8125rem",
@@ -642,6 +786,35 @@ export default function PDFReader({ source }: PDFReaderProps) {
                 {notes.length}
               </span>
             )}
+          </button>
+
+          {/* AI Assistant Toggle Button */}
+          <button
+            type="button"
+            onClick={() => {
+              if (notesPanelOpen && sidebarTab === "ai") {
+                setNotesPanelOpen(false);
+              } else {
+                setNotesPanelOpen(true);
+                setSidebarTab("ai");
+              }
+            }}
+            title="Toggle AI Assistant"
+            style={{
+              background: notesPanelOpen && sidebarTab === "ai" ? themeColors.accentTint : themeColors.btnBg,
+              border: `1px solid ${notesPanelOpen && sidebarTab === "ai" ? themeColors.accent : themeColors.border}`,
+              color: notesPanelOpen && sidebarTab === "ai" ? themeColors.accent : themeColors.text,
+              borderRadius: 8,
+              padding: "6px 10px",
+              fontSize: "0.8125rem",
+              fontWeight: 500,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+            }}
+          >
+            ✨ AI
           </button>
 
           {/* Highlight Dropdown Button (Requirement 1 & 2) */}
@@ -1464,51 +1637,105 @@ export default function PDFReader({ source }: PDFReaderProps) {
               boxShadow: "-4px 0 16px rgba(0,0,0,0.06)",
             }}
           >
-            {/* Notes Panel Header */}
+            {/* Sidebar Header with Tabs */}
             <div
               style={{
-                padding: "14px 16px",
+                padding: "10px 14px",
                 borderBottom: `1px solid ${themeColors.border}`,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
+                gap: 8,
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontWeight: 600, fontSize: "0.9375rem" }}>Notes</span>
-                <span
-                  style={{
-                    background: themeColors.accentTint,
-                    color: themeColors.accent,
-                    fontSize: "0.75rem",
-                    fontWeight: 700,
-                    padding: "2px 8px",
-                    borderRadius: 12,
-                  }}
-                >
-                  {notes.length}
-                </span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                 <button
                   type="button"
-                  onClick={addDraftNote}
+                  onClick={() => setSidebarTab("notes")}
                   style={{
-                    background: themeColors.accent,
-                    color: "#fff",
+                    background: sidebarTab === "notes" ? themeColors.accentTint : "none",
+                    color: sidebarTab === "notes" ? themeColors.accent : themeColors.textMuted,
                     border: "none",
                     borderRadius: 6,
-                    padding: "5px 10px",
-                    fontSize: "0.75rem",
-                    fontWeight: 600,
+                    padding: "6px 10px",
+                    fontSize: "0.8125rem",
+                    fontWeight: sidebarTab === "notes" ? 700 : 500,
                     cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
                   }}
                 >
-                  + Add Note
+                  <span>Notes</span>
+                  <span
+                    style={{
+                      background: sidebarTab === "notes" ? themeColors.accent : themeColors.border,
+                      color: sidebarTab === "notes" ? "#fff" : themeColors.textMuted,
+                      fontSize: "0.6875rem",
+                      fontWeight: 700,
+                      padding: "1px 6px",
+                      borderRadius: 10,
+                    }}
+                  >
+                    {notes.length}
+                  </span>
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setSidebarTab("ai")}
+                  style={{
+                    background: sidebarTab === "ai" ? themeColors.accentTint : "none",
+                    color: sidebarTab === "ai" ? themeColors.accent : themeColors.textMuted,
+                    border: "none",
+                    borderRadius: 6,
+                    padding: "6px 10px",
+                    fontSize: "0.8125rem",
+                    fontWeight: sidebarTab === "ai" ? 700 : 500,
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                  }}
+                >
+                  <span>✨ AI</span>
+                  {aiState.status === "loading" && (
+                    <span
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: "50%",
+                        background: themeColors.accent,
+                        display: "inline-block",
+                      }}
+                    />
+                  )}
+                </button>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {sidebarTab === "notes" && (
+                  <button
+                    type="button"
+                    onClick={addDraftNote}
+                    style={{
+                      background: themeColors.accent,
+                      color: "#fff",
+                      border: "none",
+                      borderRadius: 6,
+                      padding: "5px 9px",
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                    }}
+                  >
+                    + Note
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => setNotesPanelOpen(false)}
+                  title="Close panel"
                   style={{
                     background: "none",
                     border: "none",
@@ -1523,58 +1750,356 @@ export default function PDFReader({ source }: PDFReaderProps) {
               </div>
             </div>
 
-            {/* Notes List */}
-            <div
-              style={{
-                flex: 1,
-                overflowY: "auto",
-                padding: 16,
-                display: "flex",
-                flexDirection: "column",
-                gap: 12,
-              }}
-            >
-              {notes.length === 0 ? (
-                <div
-                  style={{
-                    padding: "48px 12px",
-                    textAlign: "center",
-                    color: themeColors.textMuted,
-                  }}
-                >
-                  <div style={{ fontSize: "2rem", marginBottom: 8 }}>📝</div>
-                  <p style={{ fontSize: "0.875rem", margin: "0 0 12px" }}>
-                    No notes yet. Start typing to add one.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={addDraftNote}
+            {/* TAB 1: Notes List */}
+            {sidebarTab === "notes" && (
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: 16,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                {notes.length === 0 ? (
+                  <div
                     style={{
-                      background: themeColors.btnBg,
-                      border: `1px solid ${themeColors.border}`,
-                      color: themeColors.text,
-                      padding: "6px 14px",
-                      borderRadius: 8,
-                      fontSize: "0.8125rem",
-                      fontWeight: 600,
-                      cursor: "pointer",
+                      padding: "48px 12px",
+                      textAlign: "center",
+                      color: themeColors.textMuted,
                     }}
                   >
-                    + Add first note
-                  </button>
-                </div>
-              ) : (
-                notes.map((note) => (
+                    <div style={{ fontSize: "2rem", marginBottom: 8 }}>📝</div>
+                    <p style={{ fontSize: "0.875rem", margin: "0 0 12px" }}>
+                      No notes yet. Start typing to add one.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={addDraftNote}
+                      style={{
+                        background: themeColors.btnBg,
+                        border: `1px solid ${themeColors.border}`,
+                        color: themeColors.text,
+                        padding: "6px 14px",
+                        borderRadius: 8,
+                        fontSize: "0.8125rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                      }}
+                    >
+                      + Add first note
+                    </button>
+                  </div>
+                ) : (
+                  notes.map((note) => (
+                    <div
+                      key={note.id}
+                      style={{
+                        background: themeColors.card,
+                        border: `1px solid ${themeColors.border}`,
+                        borderRadius: 10,
+                        padding: 12,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 8,
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          fontSize: "0.75rem",
+                          color: themeColors.textMuted,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => note.page && goToPage(note.page)}
+                          style={{
+                            background: "none",
+                            border: "none",
+                            color: themeColors.accent,
+                            fontWeight: 600,
+                            cursor: note.page ? "pointer" : "default",
+                            padding: 0,
+                            fontSize: "0.75rem",
+                          }}
+                        >
+                          {note.page ? `Page ${note.page}` : "General note"}
+                        </button>
+
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          {note.saveStatus === "Saving..." && (
+                            <span style={{ color: "#d97706", fontSize: "0.6875rem" }}>
+                              Saving…
+                            </span>
+                          )}
+                          {note.saveStatus === "Saved" && (
+                            <span style={{ color: "#16a34a", fontSize: "0.6875rem" }}>
+                              Saved
+                            </span>
+                          )}
+                          {note.saveStatus === "Failed - retrying" && (
+                            <span style={{ color: "#dc2626", fontSize: "0.6875rem" }}>
+                              Failed - retrying
+                            </span>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => deleteNote(note.id)}
+                            title="Delete note"
+                            style={{
+                              background: "none",
+                              border: "none",
+                              color: themeColors.textMuted,
+                              cursor: "pointer",
+                              fontSize: "0.8125rem",
+                              padding: "0 2px",
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+
+                      <textarea
+                        value={note.content}
+                        onChange={(e) => updateNoteContent(note.id, e.target.value)}
+                        onBlur={() => flushNote(note.id)}
+                        placeholder="Write your note here…"
+                        rows={3}
+                        style={{
+                          width: "100%",
+                          background: themeColors.bg,
+                          color: themeColors.text,
+                          border: `1px solid ${themeColors.border}`,
+                          borderRadius: 6,
+                          padding: "8px",
+                          fontSize: "0.8125rem",
+                          lineHeight: 1.5,
+                          resize: "vertical",
+                          outline: "none",
+                          fontFamily: "inherit",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* TAB 2: AI Assistant View */}
+            {sidebarTab === "ai" && (
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: 16,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 14,
+                }}
+              >
+                {/* Quoted passage card */}
+                {aiState.text ? (
                   <div
-                    key={note.id}
+                    style={{
+                      background: themeColors.card,
+                      border: `1px solid ${themeColors.border}`,
+                      borderLeft: `3px solid ${themeColors.accent}`,
+                      borderRadius: 8,
+                      padding: "10px 12px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 4,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.6875rem",
+                        fontWeight: 700,
+                        textTransform: "uppercase",
+                        color: themeColors.accent,
+                        letterSpacing: "0.5px",
+                      }}
+                    >
+                      Selected Passage
+                    </span>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "0.8125rem",
+                        color: themeColors.textMuted,
+                        fontStyle: "italic",
+                        lineHeight: 1.4,
+                        maxHeight: 100,
+                        overflowY: "auto",
+                      }}
+                    >
+                      "{aiState.text}"
+                    </p>
+                  </div>
+                ) : null}
+
+                {/* Level Selector */}
+                {aiState.status !== "idle" && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 10px",
+                      background: themeColors.card,
+                      border: "1px solid " + themeColors.border,
+                      borderRadius: 8,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: "0.75rem",
+                        color: themeColors.textMuted,
+                        fontWeight: 600,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Level:
+                    </span>
+                    {(["SIMPLE", "TECHNICAL"] as AiLevel[]).map((lvl) => (
+                      <button
+                        key={lvl}
+                        type="button"
+                        disabled={aiState.status === "loading"}
+                        onClick={() => {
+                          if (lvl !== aiLevel && aiState.action && aiState.text) {
+                            setAiLevel(lvl);
+                            handleAiAction(aiState.action, aiState.text, lvl);
+                          }
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: "4px 0",
+                          background: lvl === aiLevel ? themeColors.accent : "none",
+                          color: lvl === aiLevel ? "#fff" : themeColors.textMuted,
+                          border: "1px solid " + (lvl === aiLevel ? themeColors.accent : themeColors.border),
+                          borderRadius: 6,
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          cursor: aiState.status === "loading" ? "not-allowed" : "pointer",
+                          opacity: aiState.status === "loading" ? 0.5 : 1,
+                          textTransform: "capitalize",
+                        }}
+                      >
+                        {lvl === "SIMPLE" ? "Simple" : "Technical"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Loading State */}
+                {aiState.status === "loading" && (
+                  <div
+                    style={{
+                      padding: "40px 16px",
+                      textAlign: "center",
+                      color: themeColors.textMuted,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 32,
+                        height: 32,
+                        border: `3px solid ${themeColors.border}`,
+                        borderTop: `3px solid ${themeColors.accent}`,
+                        borderRadius: "50%",
+                        animation: "spin 0.8s linear infinite",
+                      }}
+                    />
+                    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+                    <div style={{ fontSize: "0.875rem", fontWeight: 600, color: themeColors.text }}>
+                      Generating {aiState.action?.toLowerCase()}…
+                    </div>
+                    <div style={{ fontSize: "0.75rem", color: themeColors.textMuted }}>
+                      {"Consulting Groq AI — " + (aiLevel === "SIMPLE" ? "Simple" : "Technical") + " level"}
+                    </div>
+                  </div>
+                )}
+
+                {/* Error State */}
+                {aiState.status === "error" && (
+                  <div
+                    style={{
+                      padding: 16,
+                      background: "rgba(239, 68, 68, 0.08)",
+                      border: "1px solid rgba(239, 68, 68, 0.3)",
+                      borderRadius: 10,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        color: "#dc2626",
+                        fontWeight: 600,
+                        fontSize: "0.875rem",
+                      }}
+                    >
+                      <span>⚠️</span> Request Failed
+                    </div>
+                    <p
+                      style={{
+                        margin: 0,
+                        fontSize: "0.8125rem",
+                        color: themeColors.text,
+                        lineHeight: 1.45,
+                      }}
+                    >
+                      {aiState.error || "Failed to generate AI response. Please try again."}
+                    </p>
+                    {aiState.action && aiState.text && (
+                      <button
+                        type="button"
+                        onClick={() => handleAiAction(aiState.action!, aiState.text)}
+                        style={{
+                          alignSelf: "flex-start",
+                          background: themeColors.accent,
+                          color: "#fff",
+                          border: "none",
+                          borderRadius: 6,
+                          padding: "6px 12px",
+                          fontSize: "0.75rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                        }}
+                      >
+                        ↻ Try Again
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Success State */}
+                {aiState.status === "success" && (
+                  <div
                     style={{
                       background: themeColors.card,
                       border: `1px solid ${themeColors.border}`,
                       borderRadius: 10,
-                      padding: 12,
+                      padding: 14,
                       display: "flex",
                       flexDirection: "column",
-                      gap: 8,
+                      gap: 12,
                     }}
                   >
                     <div
@@ -1582,87 +2107,94 @@ export default function PDFReader({ source }: PDFReaderProps) {
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        fontSize: "0.75rem",
-                        color: themeColors.textMuted,
+                        borderBottom: `1px solid ${themeColors.border}`,
+                        paddingBottom: 8,
                       }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => note.page && goToPage(note.page)}
+                      <span
                         style={{
-                          background: "none",
-                          border: "none",
+                          background: themeColors.accentTint,
                           color: themeColors.accent,
-                          fontWeight: 600,
-                          cursor: note.page ? "pointer" : "default",
-                          padding: 0,
-                          fontSize: "0.75rem",
+                          fontSize: "0.6875rem",
+                          fontWeight: 700,
+                          padding: "2px 8px",
+                          borderRadius: 4,
+                          letterSpacing: "0.5px",
                         }}
                       >
-                        {note.page ? `Page ${note.page}` : "General note"}
+                        {aiState.action} ({aiLevel})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (aiState.answer) {
+                            navigator.clipboard.writeText(aiState.answer);
+                            showToast("Copied to clipboard!");
+                          }
+                        }}
+                        title="Copy answer"
+                        style={{
+                          background: "none",
+                          border: `1px solid ${themeColors.border}`,
+                          borderRadius: 6,
+                          color: themeColors.textMuted,
+                          padding: "3px 8px",
+                          fontSize: "0.75rem",
+                          cursor: "pointer",
+                        }}
+                      >
+                        📋 Copy
                       </button>
-
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        {/* Note status indicator */}
-                        {note.saveStatus === "Saving..." && (
-                          <span style={{ color: "#d97706", fontSize: "0.6875rem" }}>
-                            Saving…
-                          </span>
-                        )}
-                        {note.saveStatus === "Saved" && (
-                          <span style={{ color: "#16a34a", fontSize: "0.6875rem" }}>
-                            Saved
-                          </span>
-                        )}
-                        {note.saveStatus === "Failed - retrying" && (
-                          <span style={{ color: "#dc2626", fontSize: "0.6875rem" }}>
-                            Failed - retrying
-                          </span>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => deleteNote(note.id)}
-                          title="Delete note"
-                          style={{
-                            background: "none",
-                            border: "none",
-                            color: themeColors.textMuted,
-                            cursor: "pointer",
-                            fontSize: "0.8125rem",
-                            padding: "0 2px",
-                          }}
-                        >
-                          🗑️
-                        </button>
-                      </div>
                     </div>
 
-                    <textarea
-                      value={note.content}
-                      onChange={(e) => updateNoteContent(note.id, e.target.value)}
-                      onBlur={() => flushNote(note.id)}
-                      placeholder="Write your note here…"
-                      rows={3}
+                    <div
                       style={{
-                        width: "100%",
-                        background: themeColors.bg,
+                        fontSize: "0.875rem",
+                        lineHeight: 1.6,
                         color: themeColors.text,
-                        border: `1px solid ${themeColors.border}`,
-                        borderRadius: 6,
-                        padding: "8px",
+                        whiteSpace: "pre-wrap",
+                        maxHeight: "calc(100vh - 360px)",
+                        overflowY: "auto",
+                      }}
+                    >
+                      {aiState.answer}
+                    </div>
+                  </div>
+                )}
+
+                {/* Idle State */}
+                {aiState.status === "idle" && (
+                  <div
+                    style={{
+                      padding: "48px 16px",
+                      textAlign: "center",
+                      color: themeColors.textMuted,
+                    }}
+                  >
+                    <div style={{ fontSize: "2.25rem", marginBottom: 12 }}>✨</div>
+                    <h4
+                      style={{
+                        margin: "0 0 8px",
+                        color: themeColors.text,
+                        fontSize: "0.9375rem",
+                        fontWeight: 600,
+                      }}
+                    >
+                      ReadAble AI Assistant
+                    </h4>
+                    <p
+                      style={{
+                        margin: 0,
                         fontSize: "0.8125rem",
                         lineHeight: 1.5,
-                        resize: "vertical",
-                        outline: "none",
-                        fontFamily: "inherit",
-                        boxSizing: "border-box",
                       }}
-                    />
+                    >
+                      Select any text passage in the document, then click <strong>Explain</strong>, <strong>Summarize</strong>, or <strong>Define</strong> from the popup menu.
+                    </p>
                   </div>
-                ))
-              )}
-            </div>
+                )}
+              </div>
+            )}
           </aside>
         )}
       </div>
@@ -1826,6 +2358,102 @@ export default function PDFReader({ source }: PDFReaderProps) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Floating AI Assistant Dropdown on Text Selection */}
+      {aiDropdown && (
+        <div
+          ref={aiDropdownRef}
+          style={{
+            position: "fixed",
+            top: aiDropdown.top,
+            left: aiDropdown.left,
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            gap: 2,
+            background: themeColors.toolbar,
+            border: `1px solid ${themeColors.border}`,
+            borderRadius: 8,
+            padding: "4px 6px",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+            userSelect: "none",
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => handleAiAction("EXPLAIN", aiDropdown.text)}
+            title="Explain this text with AI"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              background: "none",
+              border: "none",
+              color: themeColors.text,
+              padding: "5px 9px",
+              borderRadius: 6,
+              fontSize: "0.8125rem",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = themeColors.accentTint)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+          >
+            <span>💡</span> Explain
+          </button>
+
+          <div style={{ width: 1, height: 16, background: themeColors.border }} />
+
+          <button
+            type="button"
+            onClick={() => handleAiAction("SUMMARIZE", aiDropdown.text)}
+            title="Summarize this text with AI"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              background: "none",
+              border: "none",
+              color: themeColors.text,
+              padding: "5px 9px",
+              borderRadius: 6,
+              fontSize: "0.8125rem",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = themeColors.accentTint)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+          >
+            <span>📝</span> Summarize
+          </button>
+
+          <div style={{ width: 1, height: 16, background: themeColors.border }} />
+
+          <button
+            type="button"
+            onClick={() => handleAiAction("DEFINE", aiDropdown.text)}
+            title="Define key terms in this text with AI"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              background: "none",
+              border: "none",
+              color: themeColors.text,
+              padding: "5px 9px",
+              borderRadius: 6,
+              fontSize: "0.8125rem",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = themeColors.accentTint)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "none")}
+          >
+            <span>📖</span> Define
+          </button>
         </div>
       )}
 

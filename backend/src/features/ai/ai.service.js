@@ -13,11 +13,9 @@ const ACTION_INSTRUCTIONS = {
 
 const LEVEL_INSTRUCTIONS = {
   SIMPLE:
-    "Audience & Style: Elementary to beginner level. Use plain everyday language, short sentences, and intuitive real-world analogies. Avoid technical jargon; if an unavoidable term is used, explain it simply.",
-  INTERMEDIATE:
-    "Audience & Style: General educated reader. Provide a clear, balanced, and informative explanation with structured reasoning and moderate detail.",
+    "Audience & Style: Beginner / general reader. Use plain, everyday language and short sentences. Break down ideas with real-world analogies and concrete examples. Avoid all jargon; if a term is unavoidable, define it immediately in simple words. The goal is that a curious teenager could read this and fully understand it.",
   TECHNICAL:
-    "Audience & Style: Advanced / domain specialist. Provide an in-depth, rigorous explanation using precise terminology, formal nuance, and professional analytical depth.",
+    "Audience & Style: Advanced practitioner or domain specialist. Use precise technical terminology without softening. Provide rigorous reasoning, relevant edge cases, formal definitions where appropriate, and technical depth that a professional in the field would expect. Avoid over-simplifying.",
 };
 
 /**
@@ -29,7 +27,7 @@ const LEVEL_INSTRUCTIONS = {
  */
 export const buildSystemPrompt = (action, level) => {
   const actionInstruction = ACTION_INSTRUCTIONS[action] || ACTION_INSTRUCTIONS.EXPLAIN;
-  const levelInstruction = LEVEL_INSTRUCTIONS[level] || LEVEL_INSTRUCTIONS.INTERMEDIATE;
+  const levelInstruction = LEVEL_INSTRUCTIONS[level] || LEVEL_INSTRUCTIONS.SIMPLE;
 
   return [
     "You are ReadAble's AI Reading Assistant, designed to help readers understand, learn from, and engage with documents.",
@@ -84,7 +82,7 @@ export const getGroqClient = () => {
  *
  * @param {Object} params
  * @param {string} params.action - EXPLAIN | SUMMARIZE | DEFINE
- * @param {string} params.level - SIMPLE | INTERMEDIATE | TECHNICAL
+ * @param {string} params.level - SIMPLE | TECHNICAL
  * @param {string} params.text - Passage text
  * @param {Object} [options]
  * @param {Groq} [options.client] - Optional client override for testing
