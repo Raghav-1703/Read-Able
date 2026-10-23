@@ -16,4 +16,6 @@ export const config = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN,
   bcryptSaltRounds: Number(process.env.BCRYPT_SALT_ROUNDS),
   nodeEnv: process.env.NODE_ENV,
+  groqApiKey: process.env.GROQ_API_KEY,
+  groqModel: process.env.GROQ_MODEL || "openai/gpt-oss-120b",
 };
