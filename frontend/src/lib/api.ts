@@ -284,4 +284,30 @@ export const readingApi = {
     ),
 };
 
+export type AiAction = "EXPLAIN" | "SUMMARIZE" | "DEFINE";
+export type AiLevel = "SIMPLE" | "TECHNICAL";
+
+export interface AiQueryPayload {
+  action: AiAction;
+  level?: AiLevel;
+  text: string;
+}
+
+export interface AiQueryResponse {
+  documentId: number;
+  answer: string;
+  result: string;
+  action: AiAction;
+  level: string;
+  model: string;
+}
+
+export const aiApi = {
+  query: (documentId: string | number, payload: AiQueryPayload) =>
+    api.post<{ success: boolean; data: AiQueryResponse }>(
+      `/documents/${documentId}/ai/query`,
+      payload
+    ),
+};
+
 export default api;
