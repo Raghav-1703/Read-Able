@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { authApi, documentApi, readingApi, type DocumentItem, type RecentDocumentItem } from "@/lib/api";
 import SettingsPage from "./SettingsPage";
@@ -234,6 +234,12 @@ export default function ReadAbleDashboard({ initialNav = "Dashboard" }: { initia
   const [docToDelete, setDocToDelete] = useState<DocumentItem | null>(null);
   const [deleting, setDeleting] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // -- Search state -------------------------------------------------------
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchWrapRef = useRef<HTMLDivElement>(null);
 
   // -- helpers ---------------------------------------------------------
 
@@ -495,6 +501,44 @@ const handleFileSelected = async (
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [increaseSize]);
+
+  // -- Ctrl+K focuses search -----------------------------------------------
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        setSearchOpen(true);
+      }
+      if (e.key === 'Escape') {
+        setSearchOpen(false);
+        setSearchQuery('');
+      }
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, []);
+
+  // -- Close search dropdown on outside click --------------------------
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // -- Filtered search results (memoised) ------------------------------
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return documents.filter((d) =>
+      d.title.toLowerCase().includes(q) ||
+      d.fileName.toLowerCase().includes(q)
+    ).slice(0, 8);
+  }, [searchQuery, documents]);
 
   // -- preview box styling ----------------------------------------------
 
@@ -768,10 +812,78 @@ const handleFileSelected = async (
               <Menu size={18} />
             </button>
 
-            <div className="search">
+            <div className="search" ref={searchWrapRef} style={{ position: 'relative' }}>
               <Search size={16} />
-              <input placeholder="Search documents, notes, books..." />
-              <span className="kbd-hint">Ctrl + K</span>
+              <input
+                ref={searchInputRef}
+                placeholder="Search documents, notes, books..."
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+                onFocus={() => setSearchOpen(true)}
+                autoComplete="off"
+              />
+              {searchQuery ? (
+                <button
+                  onClick={() => { setSearchQuery(''); setSearchOpen(false); }}
+                  style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-3)', display: 'flex', padding: 2 }}
+                  title="Clear search"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              ) : (
+                <span className="kbd-hint">Ctrl + K</span>
+              )}
+              {searchOpen && searchQuery.trim() !== '' && (
+                <div style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  left: 0,
+                  right: 0,
+                  background: 'var(--card)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 12,
+                  boxShadow: '0 8px 24px rgba(20,15,50,0.14)',
+                  zIndex: 50,
+                  overflow: 'hidden',
+                  maxHeight: 320,
+                  overflowY: 'auto',
+                }}>
+                  {searchResults.length === 0 ? (
+                    <div style={{ padding: '14px 16px', color: 'var(--text-3)', fontSize: '0.8125rem', textAlign: 'center' }}>
+                      No documents found for "{searchQuery}"
+                    </div>
+                  ) : (
+                    searchResults.map((d) => (
+                      <div
+                        key={d.id}
+                        onClick={() => {
+                          setSearchQuery('');
+                          setSearchOpen(false);
+                          navigate({ to: '/documents//read', params: { id: String(d.id) }, search: { page: 1 } });
+                        }}
+                        style={{
+                          padding: '10px 16px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          borderBottom: '1px solid var(--border)',
+                          transition: 'background 0.1s',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--card-soft)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.title}</div>
+                          <div style={{ fontSize: '0.6875rem', color: 'var(--text-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.fileName}</div>
+                        </div>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-3)" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="resize-wrap">
