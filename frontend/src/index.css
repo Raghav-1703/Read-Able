@@ -106,3 +106,20 @@
 [data-animate-delay="3"] { transition-delay: 0.3s; }
 [data-animate-delay="4"] { transition-delay: 0.4s; }
 [data-animate-delay="5"] { transition-delay: 0.5s; }
+
+/* ── Reduced motion accessibility ── */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+[data-reduced-motion="true"] *,
+.reduce-motion * {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
