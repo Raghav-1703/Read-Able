@@ -33,13 +33,14 @@ import {
   Download,
   Trash2,
   Volume2,
+  KeyRound,
+  Edit3,
   VolumeX,
   Minus,
   Plus,
   Loader2,
-  Info,
 } from "lucide-react";
-import { documentApi, readingApi, type DocumentItem } from "@/lib/api";
+import { documentApi, readingApi, userApi, type DocumentItem } from "@/lib/api";
 import {
   loadUserSettings,
   saveUserSettings,
@@ -70,6 +71,22 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
   const [showClearHistoryConfirm, setShowClearHistoryConfirm] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isClearingHistory, setIsClearingHistory] = useState(false);
+
+  // User profile & security state
+  const [profileName, setProfileName] = useState(currentUser?.name || "");
+  const [profilePhone, setProfilePhone] = useState(currentUser?.phone || "");
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   // Active section scroll state
   const [activeSection, setActiveSection] = useState<string>("account");
@@ -222,6 +239,79 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
   };
 
   // Clear Reading History
+  const handleSaveProfile = async () => {
+    if (!profileName.trim() || profileName.trim().length < 2) {
+      showToast("Name must be at least 2 characters.", "error");
+      return;
+    }
+    setSavingProfile(true);
+    try {
+      const res = await userApi.updateProfile({
+        name: profileName.trim(),
+        phone: profilePhone.trim() || undefined,
+      });
+      if (res.data?.success) {
+        showToast("Profile updated successfully.", "success");
+        setIsEditingProfile(false);
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.message || "Failed to update profile.";
+      showToast(msg, "error");
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleChangePassword = async () => {
+    if (!currentPassword) {
+      showToast("Current password is required.", "error");
+      return;
+    }
+    if (!newPassword || newPassword.length < 8) {
+      showToast("New password must be at least 8 characters.", "error");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast("New passwords do not match.", "error");
+      return;
+    }
+    setSavingPassword(true);
+    try {
+      const res = await userApi.changePassword({ currentPassword, newPassword });
+      if (res.data?.success) {
+        showToast("Password updated successfully.", "success");
+        setShowPasswordModal(false);
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.message || "Failed to update password.";
+      showToast(msg, "error");
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!deletePassword) {
+      showToast("Please enter your password to confirm.", "error");
+      return;
+    }
+    setDeletingAccount(true);
+    try {
+      await userApi.deleteAccount({ password: deletePassword });
+      localStorage.clear();
+      showToast("Account deleted successfully.", "success");
+      window.location.href = "/";
+    } catch (err: any) {
+      const msg = err.response?.data?.message || "Incorrect password.";
+      showToast(msg, "error");
+    } finally {
+      setDeletingAccount(false);
+    }
+  };
+
   const handleClearHistory = async () => {
     try {
       setIsClearingHistory(true);
@@ -457,12 +547,62 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
       {/* 1. Account / Profile */}
       {/* ===================================================================== */}
       <section id="settings-sec-account" className="card" style={{ marginBottom: "20px" }}>
-        <div className="card-title" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <User size={18} style={{ color: "var(--accent)" }} />
-          <span>Account / Profile</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+          <div className="card-title" style={{ display: "flex", alignItems: "center", gap: "8px", margin: 0 }}>
+            <User size={18} style={{ color: "var(--accent)" }} />
+            <span>Account / Profile</span>
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button
+              type="button"
+              onClick={() => setShowPasswordModal(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "6px 12px",
+                borderRadius: "8px",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--text-2)",
+                fontSize: "0.8125rem",
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              <KeyRound size={14} />
+              <span>Change password</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (isEditingProfile) {
+                  handleSaveProfile();
+                } else {
+                  setIsEditingProfile(true);
+                }
+              }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+                padding: "6px 14px",
+                borderRadius: "8px",
+                border: "none",
+                background: "var(--accent)",
+                color: "#FFFFFF",
+                fontSize: "0.8125rem",
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              <Edit3 size={14} />
+              <span>{isEditingProfile ? (savingProfile ? "Saving..." : "Save profile") : "Edit profile"}</span>
+            </button>
+          </div>
         </div>
         <p style={{ margin: "4px 0 16px", color: "var(--text-3)", fontSize: "0.8125rem" }}>
-          Your profile details are tied to your authenticated session.
+          Your profile details and credentials for ReadAble.
         </p>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "16px" }}>
@@ -472,17 +612,19 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
             </label>
             <input
               type="text"
-              readOnly
-              value={currentUser?.name || "Not provided"}
+              readOnly={!isEditingProfile}
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+              placeholder="Your full name"
               style={{
                 width: "100%",
                 padding: "9px 12px",
                 borderRadius: "8px",
                 border: "1px solid var(--border)",
-                background: "var(--card-soft)",
+                background: isEditingProfile ? "var(--card)" : "var(--card-soft)",
                 color: "var(--text-1)",
                 fontSize: "0.875rem",
-                cursor: "not-allowed",
+                cursor: isEditingProfile ? "text" : "default",
               }}
             />
           </div>
@@ -494,7 +636,7 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
             <input
               type="email"
               readOnly
-              value={currentUser?.email || currentUser?.phone || "Not provided"}
+              value={currentUser?.email || "Not provided"}
               style={{
                 width: "100%",
                 padding: "9px 12px",
@@ -507,23 +649,29 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
               }}
             />
           </div>
-        </div>
 
-        <div
-          style={{
-            marginTop: "14px",
-            padding: "10px 14px",
-            borderRadius: "8px",
-            background: "var(--card-soft)",
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            fontSize: "0.75rem",
-            color: "var(--text-2)",
-          }}
-        >
-          <Info size={14} style={{ color: "var(--accent)", flexShrink: 0 }} />
-          <span>Profile editing and password management are secured and maintained by your authentication credentials.</span>
+          <div>
+            <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-2)", marginBottom: "6px" }}>
+              Mobile Number
+            </label>
+            <input
+              type="text"
+              readOnly={!isEditingProfile}
+              value={profilePhone}
+              onChange={(e) => setProfilePhone(e.target.value)}
+              placeholder="+1234567890"
+              style={{
+                width: "100%",
+                padding: "9px 12px",
+                borderRadius: "8px",
+                border: "1px solid var(--border)",
+                background: isEditingProfile ? "var(--card)" : "var(--card-soft)",
+                color: "var(--text-1)",
+                fontSize: "0.875rem",
+                cursor: isEditingProfile ? "text" : "default",
+              }}
+            />
+          </div>
         </div>
       </section>
 
@@ -1631,13 +1779,13 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
             <div>
               <div style={{ fontWeight: 600, fontSize: "0.875rem", color: "#EF4444" }}>Delete Account</div>
               <div style={{ fontSize: "0.75rem", color: "var(--text-2)" }}>
-                Account deletion is currently unavailable in the application. Please contact an administrator.
+                Permanently delete your account, saved documents, and reading history.
               </div>
             </div>
 
             <button
               type="button"
-              disabled
+              onClick={() => setShowDeleteModal(true)}
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -1809,6 +1957,175 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
               >
                 {isClearingHistory && <Loader2 size={14} className="animate-spin" />}
                 <span>{isClearingHistory ? "Clearing..." : "Yes, clear history"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password Modal */}
+      {showPasswordModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "20px",
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              maxWidth: "420px",
+              width: "100%",
+              background: "var(--card)",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.25)",
+            }}
+          >
+            <div className="card-title" style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <KeyRound size={20} style={{ color: "var(--accent)" }} />
+              <span>Change Password</span>
+            </div>
+            <p style={{ margin: "4px 0 16px", color: "var(--text-3)", fontSize: "0.8125rem" }}>
+              Enter your current password and choose a secure new password.
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-2)", marginBottom: "4px" }}>
+                  Current Password
+                </label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Enter current password"
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--card-soft)", color: "var(--text-1)" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-2)", marginBottom: "4px" }}>
+                  New Password (min 8 characters)
+                </label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--card-soft)", color: "var(--text-1)" }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-2)", marginBottom: "4px" }}>
+                  Confirm New Password
+                </label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter new password"
+                  style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--card-soft)", color: "var(--text-1)" }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordModal(false);
+                  setCurrentPassword("");
+                  setNewPassword("");
+                  setConfirmPassword("");
+                }}
+                style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--card)", color: "var(--text-2)", cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleChangePassword}
+                disabled={savingPassword}
+                style={{ padding: "8px 16px", borderRadius: "8px", border: "none", background: "var(--accent)", color: "#FFFFFF", fontWeight: 600, cursor: "pointer" }}
+              >
+                {savingPassword ? "Updating..." : "Update password"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Account Modal */}
+      {showDeleteModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: "20px",
+          }}
+        >
+          <div
+            className="card"
+            style={{
+              maxWidth: "420px",
+              width: "100%",
+              background: "var(--card)",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.25)",
+              border: "1px solid #EF4444",
+            }}
+          >
+            <div className="card-title" style={{ display: "flex", alignItems: "center", gap: "8px", color: "#EF4444" }}>
+              <Trash2 size={20} />
+              <span>Delete Account Permanently</span>
+            </div>
+            <p style={{ margin: "4px 0 16px", color: "var(--text-3)", fontSize: "0.8125rem" }}>
+              This action cannot be undone. All your documents, reading progress, and personal notes will be permanently deleted.
+            </p>
+
+            <div>
+              <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-2)", marginBottom: "4px" }}>
+                Confirm Password
+              </label>
+              <input
+                type="password"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                placeholder="Enter password to confirm"
+                style={{ width: "100%", padding: "9px 12px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--card-soft)", color: "var(--text-1)" }}
+              />
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "20px" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setDeletePassword("");
+                }}
+                style={{ padding: "8px 14px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--card)", color: "var(--text-2)", cursor: "pointer" }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteAccount}
+                disabled={deletingAccount}
+                style={{ padding: "8px 16px", borderRadius: "8px", border: "none", background: "#EF4444", color: "#FFFFFF", fontWeight: 600, cursor: "pointer" }}
+              >
+                {deletingAccount ? "Deleting..." : "Permanently Delete"}
               </button>
             </div>
           </div>
