@@ -264,6 +264,8 @@ const handleFileSelected = async (
       navigate({ to: "/bookmarks" });
     } else if (name === "Notes") {
       navigate({ to: "/notes" });
+    } else if (name === "Reading History") {
+      navigate({ to: "/readinghistory" });
     } else if (name === "Dashboard" || name === "My Library") {
       // Switches active tab on dashboard
     } else {

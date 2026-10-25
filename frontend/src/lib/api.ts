@@ -122,6 +122,9 @@ export interface ReadingProgressData {
 export interface ReadingProgressRecord {
   id: number;
   lastPage: number;
+  furthestPage?: number;
+  totalPages?: number | null;
+  percentage?: number;
   updatedAt: string;
   userId: number;
   documentId: number;
@@ -159,6 +162,9 @@ export interface RecentDocumentItem {
   title: string;
   fileName: string;
   lastPage: number;
+  furthestPage?: number;
+  totalPages?: number | null;
+  percentage?: number;
   updatedAt: string;
 }
 
@@ -167,6 +173,9 @@ export interface BookmarkDocumentItem {
   title: string;
   fileName: string;
   lastPage: number | null;
+  furthestPage?: number;
+  totalPages?: number | null;
+  percentage?: number;
   updatedAt: string;
 }
 
@@ -208,10 +217,15 @@ export const readingApi = {
       { headers: { "Cache-Control": "no-store" } }
     ),
 
-  putProgress: (documentId: string | number, lastPage: number) =>
+  putProgress: (documentId: string | number, lastPage: number, totalPages?: number) =>
     api.put<{ success: boolean; data: ReadingProgressRecord }>(
       `/documents/${documentId}/progress`,
-      { lastPage }
+      { lastPage, ...(totalPages !== undefined ? { totalPages } : {}) }
+    ),
+
+  resetProgress: (documentId: string | number) =>
+    api.post<{ success: boolean; data: ReadingProgressRecord }>(
+      `/documents/${documentId}/progress/reset`
     ),
 
   createNote: (
