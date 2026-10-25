@@ -1,4 +1,23 @@
 
+export interface WeekDayStat {
+  day: string;
+  date: string;
+  minutes: number;
+  completed: boolean;
+  isToday: boolean;
+}
+
+export interface ReadingStats {
+  userId: number;
+  todayMinutes: number;
+  goalMinutes: number;
+  goalPercentage: number;
+  streak: number;
+  dailyRecords: Record<string, number>;
+  weekDays: WeekDayStat[];
+}
+
+
 // Centralized API client for all backend calls
 import axios from "axios";
 
@@ -296,6 +315,14 @@ export const readingApi = {
     api.get<{ success: boolean; data: DocumentWithNotes[] }>(
       "/reading/notes"
     ),
+getStats: () =>
+    api.get<{ success: boolean; data: ReadingStats }>("/reading/stats"),
+
+  logActivity: (data: { documentId?: number | string; minutes: number; date?: string }) =>
+    api.post<{ success: boolean; data: ReadingStats }>("/reading/log-activity", data),
+
+  updateGoal: (goalMinutes: number) =>
+    api.patch<{ success: boolean; data: ReadingStats }>("/reading/goal", { goalMinutes }),
 };
 
 export type AiAction = "EXPLAIN" | "SUMMARIZE" | "DEFINE";
