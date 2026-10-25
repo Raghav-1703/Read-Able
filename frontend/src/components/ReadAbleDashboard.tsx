@@ -66,6 +66,66 @@ function formatTimeAgo(dateString: string): string {
   return `${diffDays}d ago`;
 }
 
+function CircularProgress({ percentage, size = 32 }: { percentage: number; size?: number }) {
+  const safePct = Math.min(100, Math.max(0, Math.round(percentage || 0)));
+  const strokeWidth = size >= 36 ? 4 : 3;
+  const radius = (size - strokeWidth * 2) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (safePct / 100) * circumference;
+  const isComplete = safePct === 100;
+  const strokeColor = isComplete ? "#059669" : safePct > 0 ? "var(--accent)" : "var(--text-3)";
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: size,
+        height: size,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+      title={`${safePct}% completed`}
+    >
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke="var(--border)"
+          strokeWidth={strokeWidth}
+          fill="none"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={strokeColor}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={strokeDashoffset}
+          strokeLinecap="round"
+          fill="none"
+          style={{ transition: "stroke-dashoffset 0.35s ease, stroke 0.35s ease" }}
+        />
+      </svg>
+      <span
+        style={{
+          position: "absolute",
+          fontSize: size >= 36 ? "0.625rem" : "0.5625rem",
+          fontWeight: 700,
+          color: isComplete ? "#059669" : "var(--text-1)",
+          lineHeight: 1,
+        }}
+      >
+        {`${safePct}%`}
+      </span>
+    </div>
+  );
+}
+
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -176,6 +236,24 @@ export default function ReadAbleDashboard() {
         navigate({ to: "/", replace: true });
       });
   }, [navigate, loadDocuments]);
+
+  // Refetch documents and reading progress when tab regains focus or visibility
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        loadDocuments();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("focus", loadDocuments);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", loadDocuments);
+    };
+  }, [loadDocuments]);
+
 
   const handleSignOut = () => {
     localStorage.removeItem("readable_token");
@@ -759,19 +837,22 @@ const handleFileSelected = async (
                 </div>
               </div>
 
-              <button
-                className="resume-btn"
-                onClick={() => {
-                  navigate({
-                    to: "/documents/$id/read",
-                    params: { id: String(recentDocs[0].documentId) },
-                    search: { page: recentDocs[0].lastPage || 1 },
-                  });
-                }}
-              >
-                <Play size={14} />
-                <span>Resume</span>
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+                <CircularProgress percentage={recentDocs[0].percentage ?? 0} size={36} />
+                <button
+                  className="resume-btn"
+                  onClick={() => {
+                    navigate({
+                      to: "/documents/$id/read",
+                      params: { id: String(recentDocs[0].documentId) },
+                      search: { page: recentDocs[0].lastPage || 1 },
+                    });
+                  }}
+                >
+                  <Play size={14} />
+                  <span>Resume</span>
+                </button>
+              </div>
             </div>
           ) : documents.length === 0 ? (
             <div className="card continue-card" style={{ marginBottom: 18 }}>
@@ -1178,21 +1259,24 @@ const handleFileSelected = async (
                             {d.fileName} • Page {d.lastPage} • Read {formatTimeAgo(d.updatedAt)}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          className="resume-btn"
-                          style={{ padding: "6px 14px", fontSize: "0.75rem" }}
-                          onClick={() => {
-                            navigate({
-                              to: "/documents/$id/read",
-                              params: { id: String(d.documentId) },
-                              search: { page: d.lastPage || 1 },
-                            });
-                          }}
-                        >
-                          <Play size={12} />
-                          <span>Resume</span>
-                        </button>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+                          <CircularProgress percentage={d.percentage ?? 0} size={32} />
+                          <button
+                            type="button"
+                            className="resume-btn"
+                            style={{ padding: "6px 14px", fontSize: "0.75rem" }}
+                            onClick={() => {
+                              navigate({
+                                to: "/documents/$id/read",
+                                params: { id: String(d.documentId) },
+                                search: { page: d.lastPage || 1 },
+                              });
+                            }}
+                          >
+                            <Play size={12} />
+                            <span>Resume</span>
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
