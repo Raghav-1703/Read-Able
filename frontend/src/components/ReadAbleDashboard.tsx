@@ -1,6 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { authApi, documentApi, readingApi, type DocumentItem, type RecentDocumentItem } from "@/lib/api";
+import SettingsPage from "./SettingsPage";
+import {
+  loadUserSettings,
+  saveUserSettings,
+  subscribeToUserSettings,
+  subscribeToReadingGoal,
+  speakText,
+  stopSpeech,
+} from "@/lib/appSettings";
 import {
   LayoutDashboard,
   BookOpen,
@@ -130,26 +139,45 @@ function CircularProgress({ percentage, size = 32 }: { percentage: number; size?
 // Component
 // ---------------------------------------------------------------------------
 
-export default function ReadAbleDashboard() {
+export default function ReadAbleDashboard({ initialNav = "Dashboard" }: { initialNav?: string } = {}) {
   const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState<{ id: number; name: string; email?: string | null; phone?: string | null } | null>(null);
 
-  const [theme, setTheme] = useState<"light" | "dark">("light");
-  const [activeNav, setActiveNav] = useState("Dashboard");
+  const initialSettings = loadUserSettings();
+  const [theme, setTheme] = useState<"light" | "dark">(initialSettings.appearance.theme || "light");
+  const [activeNav, setActiveNav] = useState(initialNav || "Dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [notifOpen, setNotifOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
-  const [fontSize, setFontSize] = useState(18);
-  const [font, setFont] = useState("OpenDyslexic");
-  const [contrast, setContrast] = useState("Standard");
+  const [fontSize, setFontSize] = useState(initialSettings.reading.fontSize || 18);
+  const [font, setFont] = useState<string>(initialSettings.reading.fontFamily || "OpenDyslexic");
+  const [contrast, setContrast] = useState<string>(initialSettings.reading.contrast || "Standard");
   const [aloudOn, setAloudOn] = useState(false);
 
   const [playing, setPlaying] = useState(false);
 
-  const [goalMinutes, setGoalMinutes] = useState(50);
-  const goalDone = 0;
+  const [goalMinutes, setGoalMinutes] = useState(initialSettings.goal.goalMinutes || 50);
+  const [goalDone, setGoalDone] = useState(initialSettings.goal.completedMinutes || 0);
+
+  // Real-time synchronization for settings and daily goal
+  useEffect(() => {
+    const unsubSettings = subscribeToUserSettings((s) => {
+      setTheme(s.appearance.theme);
+      setFont(s.reading.fontFamily);
+      setFontSize(s.reading.fontSize);
+      setContrast(s.reading.contrast);
+    });
+    const unsubGoal = subscribeToReadingGoal((g) => {
+      setGoalMinutes(g.goalMinutes);
+      setGoalDone(g.completedMinutes);
+    });
+    return () => {
+      unsubSettings();
+      unsubGoal();
+    };
+  }, []);
 
   const [zoomIndex, setZoomIndex] = useState(0);
 
@@ -344,6 +372,8 @@ const handleFileSelected = async (
       navigate({ to: "/notes" });
     } else if (name === "Reading History") {
       navigate({ to: "/readinghistory" });
+    } else if (name === "Settings") {
+      setActiveNav("Settings");
     } else if (name === "Dashboard" || name === "My Library") {
       // Switches active tab on dashboard
     } else {
@@ -352,16 +382,38 @@ const handleFileSelected = async (
   };
 
   const changeFont = (dir: number) => {
-    setFontSize((v) => Math.min(28, Math.max(14, v + dir)));
+    setFontSize((v) => {
+      const next = Math.min(32, Math.max(14, v + dir));
+      const current = loadUserSettings(currentUser?.id);
+      saveUserSettings({ ...current, reading: { ...current.reading, fontSize: next } }, currentUser?.id);
+      return next;
+    });
   };
 
-  const toggleAloud = () => setAloudOn((v) => !v);
+  const toggleAloud = () => {
+    if (aloudOn) {
+      stopSpeech();
+      setAloudOn(false);
+    } else {
+      const previewText = "This is a live preview. Try changing the text size, font, or contrast above to see how a page will look while you're reading.";
+      const started = speakText(
+        previewText,
+        loadUserSettings(currentUser?.id).readAloud,
+        () => setAloudOn(false),
+        () => setAloudOn(false)
+      );
+      setAloudOn(Boolean(started));
+    }
+  };
   const togglePlay = () => setPlaying((v) => !v);
 
   const editGoal = () => {
     const input = window.prompt("Set your daily reading goal (minutes):", String(goalMinutes));
     if (input && !isNaN(Number(input))) {
-      setGoalMinutes(parseInt(input, 10));
+      const val = Math.max(5, parseInt(input, 10));
+      setGoalMinutes(val);
+      const current = loadUserSettings(currentUser?.id);
+      saveUserSettings({ ...current, goal: { ...current.goal, goalMinutes: val } }, currentUser?.id);
     }
   };
 
@@ -694,7 +746,14 @@ const handleFileSelected = async (
             </div>
 
             <div className="topbar-right">
-              <div className="darkmode-toggle" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}>
+              <div className="darkmode-toggle" onClick={() => {
+                setTheme((t) => {
+                  const next = t === "dark" ? "light" : "dark";
+                  const current = loadUserSettings(currentUser?.id);
+                  saveUserSettings({ ...current, appearance: { theme: next } }, currentUser?.id);
+                  return next;
+                });
+              }}>
                 <span>Dark mode</span>
                 <div className="switch" />
               </div>
@@ -742,7 +801,7 @@ const handleFileSelected = async (
                   <div className="item" onClick={() => toast("Opening profile")}>
                     Profile
                   </div>
-                  <div className="item" onClick={() => toast("Opening settings")}>
+                  <div className="item" onClick={() => { setProfileOpen(false); setActiveNav("Settings"); }}>
                     Settings
                   </div>
                   <div className="item" onClick={handleSignOut}>
@@ -753,7 +812,11 @@ const handleFileSelected = async (
             </div>
           </div>
 
-          <h2 className="greet">Good morning, {currentUser?.name?.split(" ")[0] || "User"} 👋</h2>
+          {activeNav === "Settings" ? (
+            <SettingsPage currentUser={currentUser} onThemeChange={setTheme} />
+          ) : (
+            <>
+              <h2 className="greet">Good morning, {currentUser?.name?.split(" ")[0] || "User"} 👋</h2>
           <p className="sub">Let's continue your reading journey.</p>
 
           {/* Reading settings */}
@@ -784,7 +847,16 @@ const handleFileSelected = async (
                   <Type size={14} />
                   Font
                 </div>
-                <select className="setting-select" value={font} onChange={(e) => setFont(e.target.value)}>
+                <select className="setting-select" value={font} onChange={(e) => {
+                  const newFont = e.target.value;
+                  setFont(newFont);
+                  const current = loadUserSettings(currentUser?.id);
+                  saveUserSettings({
+                    ...current,
+                    reading: { ...current.reading, fontFamily: (newFont === 'Standard sans' ? 'Inter' : newFont) as any },
+                    accessibility: { ...current.accessibility, dyslexiaFont: newFont === 'OpenDyslexic' },
+                  }, currentUser?.id);
+                }}>
                   <option>OpenDyslexic</option>
                   <option>Lexend</option>
                   <option>Standard sans</option>
@@ -796,7 +868,16 @@ const handleFileSelected = async (
                   <Contrast size={14} />
                   Contrast
                 </div>
-                <select className="setting-select" value={contrast} onChange={(e) => setContrast(e.target.value)}>
+                <select className="setting-select" value={contrast} onChange={(e) => {
+                  const newContrast = e.target.value;
+                  setContrast(newContrast);
+                  const current = loadUserSettings(currentUser?.id);
+                  saveUserSettings({
+                    ...current,
+                    reading: { ...current.reading, contrast: newContrast as any },
+                    accessibility: { ...current.accessibility, highContrast: newContrast === 'High contrast' },
+                  }, currentUser?.id);
+                }}>
                   <option>Standard</option>
                   <option>High contrast</option>
                   <option>Cream background</option>
@@ -1284,6 +1365,8 @@ const handleFileSelected = async (
               )
             )}
           </div>
+            </>
+          )}
         </main>
 
         {/* Right column */}
