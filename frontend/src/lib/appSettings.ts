@@ -1,20 +1,21 @@
 /**
  * appSettings.ts
  *
- * Centralized settings manager for ReadAble.
+ * Centralized settings and reading statistics manager for ReadAble.
  * Handles persistence, restoration, and real-time synchronization of:
  * - Reading Preferences (font, size, contrast, spacing, view mode)
  * - Accessibility (dyslexia font, high contrast, reduced motion)
  * - Read Aloud (voice, speed, pitch, auto-read)
  * - Appearance (light/dark theme)
  * - Notifications (reading reminders, document updates, product updates)
- * - Daily Reading Goals (daily target, today's completed time, automatic midnight reset)
+ * - Daily Reading Goals & Reading Streak (daily target, completed minutes, consecutive days, weekdays)
  *
  * All settings are user-scoped where possible and stored in localStorage.
- * Synchronizes with readerSettings.ts so existing Reader interfaces remain unified.
+ * Synchronizes with readerSettings.ts and backend reading statistics.
  */
 
 import { loadReaderSettings, saveReaderSettings, type ReaderFont, type ReaderTheme, type ReaderViewMode } from "./readerSettings";
+import { readingApi, type ReadingStats, type WeekDayStat } from "./api";
 
 export interface ReadingPreferencesSettings {
   fontFamily: ReaderFont;
@@ -48,6 +49,7 @@ export interface ReadingGoalSettings {
   goalMinutes: number; // Daily reading goal target in minutes
   completedMinutes: number; // Today's completed reading minutes
   date: string; // YYYY-MM-DD
+  streak?: number;
 }
 
 export interface UserSettings {
@@ -61,11 +63,11 @@ export interface UserSettings {
   goal: ReadingGoalSettings;
 }
 
-const SETTINGS_EVENT = "readable_settings_changed";
-const GOAL_EVENT = "readable_goal_changed";
+export const SETTINGS_EVENT = "readable_settings_changed";
+export const GOAL_EVENT = "readable_goal_changed";
+export const STATS_EVENT = "readable_stats_changed";
 
-function getTodayString(): string {
-  const d = new Date();
+export function getTodayString(d: Date = new Date()): string {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -111,34 +113,167 @@ function getStorageKey(userId?: number | string): string {
   return userId ? `readable_user_settings_${userId}` : "readable_user_settings_default";
 }
 
+function getActivityStorageKey(userId?: number | string): string {
+  return userId ? `readable_reading_activity_${userId}` : "readable_reading_activity_default";
+}
+
+export function loadUserReadingActivity(userId?: number | string): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(getActivityStorageKey(userId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveUserReadingActivity(activity: Record<string, number>, userId?: number | string): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(getActivityStorageKey(userId), JSON.stringify(activity));
+  } catch {}
+}
+
 /**
- * Loads all user settings, merging saved state with safe defaults.
- * Automatically checks and resets daily reading progress if the calendar day changed.
+ * Calculates consecutive reading streak from daily records.
+ * A day is a reading day if minutes >= 1.
+ */
+export function calculateClientReadingStreak(
+  dailyRecords: Record<string, number> = {},
+  todayStr: string = getTodayString()
+): number {
+  const todayMinutes = Number(dailyRecords[todayStr]) || 0;
+  const [ty, tm, td] = todayStr.split("-").map(Number);
+  const todayDate = new Date(ty, tm - 1, td);
+
+  let checkDate: Date;
+  if (todayMinutes >= 1) {
+    checkDate = new Date(todayDate);
+  } else {
+    const yesterday = new Date(todayDate);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yStr = getTodayString(yesterday);
+    if ((Number(dailyRecords[yStr]) || 0) >= 1) {
+      checkDate = yesterday;
+    } else {
+      return 0;
+    }
+  }
+
+  let streak = 0;
+  const cursor = new Date(checkDate);
+  while (true) {
+    const curStr = getTodayString(cursor);
+    const mins = Number(dailyRecords[curStr]) || 0;
+    if (mins >= 1) {
+      streak += 1;
+      cursor.setDate(cursor.getDate() - 1);
+    } else {
+      break;
+    }
+  }
+
+  return streak;
+}
+
+/**
+ * Generates 7 weekday objects for the current calendar week (Monday to Sunday).
+ */
+export function calculateClientWeekDays(
+  dailyRecords: Record<string, number> = {},
+  referenceDate: Date = new Date()
+): WeekDayStat[] {
+  const ref = new Date(referenceDate);
+  const dayOfWeek = ref.getDay();
+  const mondayOffset = (dayOfWeek + 6) % 7;
+
+  const monday = new Date(ref);
+  monday.setDate(ref.getDate() - mondayOffset);
+  monday.setHours(0, 0, 0, 0);
+
+  const dayLabels = ["M", "T", "W", "T", "F", "S", "S"];
+  const todayStr = getTodayString(ref);
+
+  const week: WeekDayStat[] = [];
+  for (let i = 0; i < 7; i++) {
+    const current = new Date(monday);
+    current.setDate(monday.getDate() + i);
+    const dateStr = getTodayString(current);
+    const minutes = Number(dailyRecords[dateStr]) || 0;
+
+    week.push({
+      day: dayLabels[i],
+      date: dateStr,
+      minutes,
+      completed: minutes >= 1,
+      isToday: dateStr === todayStr,
+    });
+  }
+
+  return week;
+}
+
+/**
+ * Loads user settings from persistent storage.
  */
 export function loadUserSettings(userId?: number | string): UserSettings {
-  try {
-    const raw = localStorage.getItem(getStorageKey(userId));
-    const parsed: Partial<UserSettings> = raw ? JSON.parse(raw) : {};
-
-    // Also consult existing readerSettings and theme for backward compatibility
-    const existingReader = loadReaderSettings();
-    const storedTheme = (localStorage.getItem("readable_theme") as "light" | "dark") || null;
-
-    const today = getTodayString();
-    let goalData: ReadingGoalSettings = {
-      goalMinutes: parsed.goal?.goalMinutes ?? DEFAULT_SETTINGS.goal.goalMinutes,
-      completedMinutes: parsed.goal?.completedMinutes ?? 0,
-      date: parsed.goal?.date ?? today,
+  if (typeof window === "undefined") {
+    return {
+      ...DEFAULT_SETTINGS,
+      goal: { ...DEFAULT_SETTINGS.goal, date: getTodayString() },
     };
+  }
 
-    // If day rolled over, reset today's completed reading minutes
-    if (goalData.date !== today) {
-      goalData = {
-        goalMinutes: goalData.goalMinutes,
-        completedMinutes: 0,
-        date: today,
+  try {
+    const key = getStorageKey(userId);
+    const raw = localStorage.getItem(key);
+    const existingReader = loadReaderSettings();
+    const storedTheme = localStorage.getItem("readable_theme") as "light" | "dark" | null;
+
+    if (!raw) {
+      const initial: UserSettings = {
+        ...DEFAULT_SETTINGS,
+        reading: {
+          ...DEFAULT_SETTINGS.reading,
+          fontFamily: existingReader.fontFamily || DEFAULT_SETTINGS.reading.fontFamily,
+          fontSize: existingReader.fontSize || DEFAULT_SETTINGS.reading.fontSize,
+          contrast:
+            existingReader.theme === "dark"
+              ? "High contrast"
+              : existingReader.theme === "sepia"
+              ? "Cream background"
+              : "Standard",
+          viewMode: existingReader.viewMode || DEFAULT_SETTINGS.reading.viewMode,
+        },
+        accessibility: {
+          ...DEFAULT_SETTINGS.accessibility,
+          dyslexiaFont: existingReader.fontFamily === "OpenDyslexic",
+          highContrast: existingReader.theme === "dark",
+        },
+        appearance: {
+          theme: storedTheme || (existingReader.theme === "dark" ? "dark" : "light"),
+        },
+        goal: {
+          ...DEFAULT_SETTINGS.goal,
+          date: getTodayString(),
+        },
       };
+
+      saveUserSettings(initial, userId);
+      return initial;
     }
+
+    const parsed = JSON.parse(raw) as Partial<UserSettings>;
+    const today = getTodayString();
+
+    const goalData: ReadingGoalSettings = {
+      goalMinutes: Number(parsed.goal?.goalMinutes) || DEFAULT_SETTINGS.goal.goalMinutes,
+      completedMinutes: parsed.goal?.date === today ? Number(parsed.goal?.completedMinutes) || 0 : 0,
+      date: today,
+      streak: parsed.goal?.streak,
+    };
 
     const settings: UserSettings = {
       reading: {
@@ -182,20 +317,15 @@ export function loadUserSettings(userId?: number | string): UserSettings {
 }
 
 /**
- * Saves all user settings to persistent storage and syncs relevant keys:
- * - `readable_theme`
- * - `readable_reader_settings` (via saveReaderSettings)
- * - Emits a custom window event so listeners update immediately
+ * Saves all user settings to persistent storage.
  */
 export function saveUserSettings(settings: UserSettings, userId?: number | string): void {
   try {
     const key = getStorageKey(userId);
     localStorage.setItem(key, JSON.stringify(settings));
 
-    // Sync theme
     localStorage.setItem("readable_theme", settings.appearance.theme);
 
-    // Sync reader settings for PDFReader.tsx
     const readerTheme: ReaderTheme =
       settings.accessibility.highContrast || settings.reading.contrast === "High contrast"
         ? "dark"
@@ -214,22 +344,15 @@ export function saveUserSettings(settings: UserSettings, userId?: number | strin
       comfortableSpacing: settings.reading.comfortableSpacing,
     });
 
-    // Apply reduced motion to document root
     applyReducedMotion(settings.accessibility.reducedMotion);
 
-    // Notify other components
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent(SETTINGS_EVENT, { detail: settings }));
       window.dispatchEvent(new CustomEvent(GOAL_EVENT, { detail: settings.goal }));
     }
-  } catch {
-    // Fail silently if localStorage is restricted
-  }
+  } catch {}
 }
 
-/**
- * Applies or removes reduced motion styles on document.documentElement
- */
 export function applyReducedMotion(enabled: boolean): void {
   if (typeof document === "undefined") return;
   if (enabled) {
@@ -241,9 +364,6 @@ export function applyReducedMotion(enabled: boolean): void {
   }
 }
 
-/**
- * Resets preferences to safe default values without deleting user data.
- */
 export function resetUserSettingsToDefaults(userId?: number | string): UserSettings {
   const defaults: UserSettings = {
     ...DEFAULT_SETTINGS,
@@ -257,23 +377,37 @@ export function resetUserSettingsToDefaults(userId?: number | string): UserSetti
 }
 
 /**
- * Adds reading activity in minutes to today's completed goal.
- * Automatically handles midnight reset if the date has changed.
+ * Records valid reading minutes for the authenticated user and document.
+ * Accumulates on calendar day, persists locally and syncs with backend.
  */
-export function recordReadingMinutes(minutesToAdd: number, userId?: number | string): ReadingGoalSettings {
+export function recordReadingMinutes(
+  minutesToAdd: number,
+  userId?: number | string,
+  documentId?: number | string
+): ReadingGoalSettings {
   const current = loadUserSettings(userId);
   const today = getTodayString();
+  const mins = Math.max(0, Math.round(minutesToAdd));
+
+  // Update daily activity map
+  const activity = loadUserReadingActivity(userId);
+  const currentTodayMins = Number(activity[today]) || 0;
+  activity[today] = currentTodayMins + mins;
+  saveUserReadingActivity(activity, userId);
+
+  const streak = calculateClientReadingStreak(activity, today);
 
   let completed = current.goal.completedMinutes;
   if (current.goal.date !== today) {
     completed = 0;
   }
-  completed += Math.max(0, minutesToAdd);
+  completed += mins;
 
   const updatedGoal: ReadingGoalSettings = {
     goalMinutes: current.goal.goalMinutes,
     completedMinutes: Math.round(completed),
     date: today,
+    streak,
   };
 
   const nextSettings: UserSettings = {
@@ -282,12 +416,65 @@ export function recordReadingMinutes(minutesToAdd: number, userId?: number | str
   };
 
   saveUserSettings(nextSettings, userId);
+
+  // Sync to backend API if authenticated
+  if (typeof window !== "undefined" && localStorage.getItem("readable_token") && mins >= 1) {
+    readingApi
+      .logActivity({
+        documentId: documentId ? String(documentId) : undefined,
+        minutes: mins,
+      })
+      .then((res: any) => {
+        if (res.data?.success && res.data?.data) {
+          const stats = res.data.data;
+          window.dispatchEvent(new CustomEvent(STATS_EVENT, { detail: stats }));
+        }
+      })
+      .catch(() => {
+        // Fallback kept in local state
+      });
+  }
+
   return updatedGoal;
 }
 
 /**
- * Subscribes to settings changes across components.
+ * Fetches latest reading stats from backend and syncs with local storage.
  */
+export async function syncReadingStatsWithBackend(userId?: number | string): Promise<ReadingStats | null> {
+  if (typeof window === "undefined" || !localStorage.getItem("readable_token")) {
+    return null;
+  }
+  try {
+    const res = await readingApi.getStats();
+    if (res.data?.success && res.data?.data) {
+      const stats = res.data.data;
+      const today = getTodayString();
+
+      // Merge records with local activity
+      const localActivity = loadUserReadingActivity(userId);
+      const merged = { ...localActivity, ...stats.dailyRecords };
+      saveUserReadingActivity(merged, userId);
+
+      const current = loadUserSettings(userId);
+      const nextSettings: UserSettings = {
+        ...current,
+        goal: {
+          goalMinutes: stats.goalMinutes || current.goal.goalMinutes,
+          completedMinutes: stats.todayMinutes,
+          date: today,
+          streak: stats.streak,
+        },
+      };
+      saveUserSettings(nextSettings, userId);
+
+      window.dispatchEvent(new CustomEvent(STATS_EVENT, { detail: stats }));
+      return stats;
+    }
+  } catch {}
+  return null;
+}
+
 export function subscribeToUserSettings(callback: (settings: UserSettings) => void): () => void {
   if (typeof window === "undefined") return () => {};
   const handler = (e: Event) => {
@@ -298,9 +485,6 @@ export function subscribeToUserSettings(callback: (settings: UserSettings) => vo
   return () => window.removeEventListener(SETTINGS_EVENT, handler);
 }
 
-/**
- * Subscribes specifically to reading goal changes.
- */
 export function subscribeToReadingGoal(callback: (goal: ReadingGoalSettings) => void): () => void {
   if (typeof window === "undefined") return () => {};
   const handler = (e: Event) => {
@@ -309,6 +493,16 @@ export function subscribeToReadingGoal(callback: (goal: ReadingGoalSettings) => 
   };
   window.addEventListener(GOAL_EVENT, handler);
   return () => window.removeEventListener(GOAL_EVENT, handler);
+}
+
+export function subscribeToReadingStats(callback: (stats: ReadingStats) => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const handler = (e: Event) => {
+    const customEvent = e as CustomEvent<ReadingStats>;
+    callback(customEvent.detail);
+  };
+  window.addEventListener(STATS_EVENT, handler);
+  return () => window.removeEventListener(STATS_EVENT, handler);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,9 +525,7 @@ export function stopSpeech(): void {
   try {
     window.speechSynthesis.cancel();
     activeUtterance = null;
-  } catch {
-    // Ignore browser speech errors
-  }
+  } catch {}
 }
 
 export function speakText(
