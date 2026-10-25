@@ -23,6 +23,7 @@ import {
   type ReaderViewMode,
 } from "@/lib/readerSettings";
 import { useReadingSession } from "@/lib/useReadingSession";
+import { loadUserSettings, recordReadingMinutes, speakText, stopSpeech } from "@/lib/appSettings";
 import { documentApi, aiApi, type HighlightRecord, type AiAction, type AiLevel } from "@/lib/api";
 
 // Setup pdf.js worker
@@ -298,6 +299,32 @@ export default function PDFReader({ source }: PDFReaderProps) {
     extractedPages[currentPage - 1];
 
   const pageText = currentPageContent?.text || "";
+
+  // Auto-read page text when enabled in settings
+  useEffect(() => {
+    const userSettings = loadUserSettings();
+    if (userSettings.readAloud?.autoRead && pageText) {
+      speakText(pageText, userSettings.readAloud);
+    }
+    return () => {
+      stopSpeech();
+    };
+  }, [currentPage, pageText]);
+
+  // Track active reading time toward daily reading goal
+  useEffect(() => {
+    let readingSeconds = 0;
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        readingSeconds += 10;
+        if (readingSeconds >= 60) {
+          recordReadingMinutes(1);
+          readingSeconds = 0;
+        }
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Valid highlights for active page (Item 2: skip non-matching text or old rects form)
   const validPageHighlights = useMemo(() => {

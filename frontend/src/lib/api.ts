@@ -325,3 +325,27 @@ export const aiApi = {
 };
 
 export default api;
+
+
+export interface UserProfile {
+  id: number;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const userApi = {
+  getProfile: () =>
+    api.get<{ success: boolean; data: UserProfile }>("/users/profile"),
+
+  updateProfile: (data: { name?: string; phone?: string }) =>
+    api.patch<{ success: boolean; data: UserProfile; message?: string }>("/users/profile", data),
+
+  changePassword: (data: { currentPassword: string; newPassword: string }) =>
+    api.post<{ success: boolean; message: string }>("/users/change-password", data),
+
+  deleteAccount: (data: { password: string }) =>
+    api.delete<{ success: boolean; message: string }>("/users/account", { data }),
+};
