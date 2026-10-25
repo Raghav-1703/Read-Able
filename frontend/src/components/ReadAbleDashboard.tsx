@@ -7,9 +7,15 @@ import {
   saveUserSettings,
   subscribeToUserSettings,
   subscribeToReadingGoal,
+  subscribeToReadingStats,
+  syncReadingStatsWithBackend,
+  loadUserReadingActivity,
+  calculateClientReadingStreak,
+  calculateClientWeekDays,
   speakText,
   stopSpeech,
 } from "@/lib/appSettings";
+import { type WeekDayStat } from "@/lib/api";
 import {
   LayoutDashboard,
   BookOpen,
@@ -160,8 +166,28 @@ export default function ReadAbleDashboard({ initialNav = "Dashboard" }: { initia
 
   const [goalMinutes, setGoalMinutes] = useState(initialSettings.goal.goalMinutes || 50);
   const [goalDone, setGoalDone] = useState(initialSettings.goal.completedMinutes || 0);
+  const [streak, setStreak] = useState<number>(() => {
+    const act = loadUserReadingActivity();
+    return calculateClientReadingStreak(act);
+  });
+  const [weekDays, setWeekDays] = useState<WeekDayStat[]>(() => {
+    const act = loadUserReadingActivity();
+    return calculateClientWeekDays(act);
+  });
 
-  // Real-time synchronization for settings and daily goal
+  // Sync stats from backend when user is loaded
+  useEffect(() => {
+    syncReadingStatsWithBackend(currentUser?.id).then((stats) => {
+      if (stats) {
+        setStreak(stats.streak);
+        setWeekDays(stats.weekDays);
+        setGoalDone(stats.todayMinutes);
+        setGoalMinutes(stats.goalMinutes);
+      }
+    });
+  }, [currentUser?.id]);
+
+  // Real-time synchronization for settings, goal, and streak stats
   useEffect(() => {
     const unsubSettings = subscribeToUserSettings((s) => {
       setTheme(s.appearance.theme);
@@ -172,12 +198,22 @@ export default function ReadAbleDashboard({ initialNav = "Dashboard" }: { initia
     const unsubGoal = subscribeToReadingGoal((g) => {
       setGoalMinutes(g.goalMinutes);
       setGoalDone(g.completedMinutes);
+      const act = loadUserReadingActivity(currentUser?.id);
+      setStreak(calculateClientReadingStreak(act));
+      setWeekDays(calculateClientWeekDays(act));
+    });
+    const unsubStats = subscribeToReadingStats((stats) => {
+      setStreak(stats.streak);
+      setWeekDays(stats.weekDays);
+      setGoalDone(stats.todayMinutes);
+      setGoalMinutes(stats.goalMinutes);
     });
     return () => {
       unsubSettings();
       unsubGoal();
+      unsubStats();
     };
-  }, []);
+  }, [currentUser?.id]);
 
   const [zoomIndex, setZoomIndex] = useState(0);
 
@@ -414,6 +450,7 @@ const handleFileSelected = async (
       setGoalMinutes(val);
       const current = loadUserSettings(currentUser?.id);
       saveUserSettings({ ...current, goal: { ...current.goal, goalMinutes: val } }, currentUser?.id);
+      readingApi.updateGoal(val).catch(() => {});
     }
   };
 
@@ -1376,16 +1413,45 @@ const handleFileSelected = async (
               <Flame size={17} />
               Reading streak
             </div>
-            <div className="streak-num">0</div>
-            <div style={{ color: "var(--text-3)", fontSize: 12 }}>days — start reading to build a streak!</div>
+            <div className="streak-num">{streak}</div>
+            <div style={{ color: "var(--text-3)", fontSize: 12 }}>
+              {streak === 1 ? "day" : "days"} — {streak > 0 ? "keep the momentum going!" : "start reading to build a streak!"}
+            </div>
             <div className="streak-days">
-              <span>M</span>
-              <span>T</span>
-              <span>W</span>
-              <span>T</span>
-              <span>F</span>
-              <span>S</span>
-              <span>S</span>
+              {weekDays.map((item, idx) => (
+                <span
+                  key={`${item.day}-${idx}`}
+                  title={`${item.date}: ${item.minutes} min${item.minutes === 1 ? "" : "s"}${item.isToday ? " (Today)" : ""}`}
+                  style={{
+                    width: 26,
+                    height: 26,
+                    borderRadius: "50%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "0.6875rem",
+                    fontWeight: item.isToday || item.completed ? 700 : 500,
+                    background: item.completed
+                      ? "var(--success)"
+                      : item.isToday
+                      ? "var(--accent-tint)"
+                      : "var(--card-soft)",
+                    color: item.completed
+                      ? "#FFFFFF"
+                      : item.isToday
+                      ? "var(--accent)"
+                      : "var(--text-3)",
+                    border: item.isToday
+                      ? "2px solid var(--accent)"
+                      : item.completed
+                      ? "none"
+                      : "1px solid var(--border)",
+                    boxShadow: item.isToday ? "0 0 0 1px var(--accent-tint)" : "none",
+                  }}
+                >
+                  {item.completed ? "✓" : item.day}
+                </span>
+              ))}
             </div>
           </div>
 

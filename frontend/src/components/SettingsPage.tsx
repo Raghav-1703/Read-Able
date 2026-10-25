@@ -140,6 +140,9 @@ export default function SettingsPage({ currentUser, onThemeChange }: SettingsPag
       if (onThemeChange && next.appearance.theme !== prev.appearance.theme) {
         onThemeChange(next.appearance.theme);
       }
+      if (next.goal.goalMinutes !== prev.goal.goalMinutes) {
+        readingApi.updateGoal(next.goal.goalMinutes).catch(() => {});
+      }
       return next;
     });
     setSaveStatus("saved");
