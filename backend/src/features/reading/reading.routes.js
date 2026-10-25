@@ -13,6 +13,9 @@ import {
   getReading,
   saveProgress,
   resetProgress,
+  getStats,
+  logActivity,
+  updateGoal,
 } from "./reading.controller.js";
 import documentReadingRoutes from "./reading.document.routes.js";
 
@@ -20,6 +23,11 @@ const router = Router();
 
 // Protect all reading endpoints with JWT authentication
 router.use(authenticate);
+
+// Reading streak & daily goal statistics
+router.get("/stats", getStats);
+router.post("/log-activity", logActivity);
+router.patch("/goal", updateGoal);
 
 // Aggregate endpoints
 router.get("/recent", getRecent);

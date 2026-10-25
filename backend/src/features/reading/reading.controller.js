@@ -1,12 +1,14 @@
 /**
  * reading.controller.js
  *
- * Express controller handling requests for reading progress, notes, and highlights.
+ * Express controller handling requests for reading progress, notes, highlights,
+ * and reading streak / goal statistics.
  */
 
 import { sendSuccess } from "../../shared/utils/response.js";
 import { ValidationError } from "../../shared/utils/errors.js";
 import * as readingService from "./reading.service.js";
+import * as statsService from "./reading.stats.service.js";
 
 function getDocumentIdParam(req) {
   const documentId = req.params.documentId || req.params.id;
@@ -153,6 +155,39 @@ export const getNotes = async (req, res, next) => {
   try {
     const list = await readingService.getUserNotes(req.user.id);
     sendSuccess(res, list, "User notes retrieved");
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const getStats = async (req, res, next) => {
+  try {
+    const stats = await statsService.getUserReadingStats(req.user.id);
+    sendSuccess(res, stats, "Reading stats retrieved");
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const logActivity = async (req, res, next) => {
+  try {
+    const { documentId, minutes, date } = req.body || {};
+    const stats = await statsService.logUserReadingActivity(req.user.id, {
+      documentId,
+      minutes,
+      date,
+    });
+    sendSuccess(res, stats, "Reading activity logged successfully");
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const updateGoal = async (req, res, next) => {
+  try {
+    const { goalMinutes } = req.body || {};
+    const stats = await statsService.updateUserDailyGoal(req.user.id, goalMinutes);
+    sendSuccess(res, stats, "Daily reading goal updated successfully");
   } catch (err) {
     next(err);
   }
