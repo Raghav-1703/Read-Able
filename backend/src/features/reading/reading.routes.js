@@ -12,6 +12,7 @@ import {
   getNotes,
   getReading,
   saveProgress,
+  resetProgress,
 } from "./reading.controller.js";
 import documentReadingRoutes from "./reading.document.routes.js";
 
@@ -37,6 +38,14 @@ router.post("/progress/:documentId", (req, res, next) => {
 router.put("/progress/:documentId", (req, res, next) => {
   req.params.documentId = req.params.documentId;
   return saveProgress(req, res, next);
+});
+router.post("/progress/:documentId/reset", (req, res, next) => {
+  req.params.documentId = req.params.documentId;
+  return resetProgress(req, res, next);
+});
+router.delete("/progress/:documentId", (req, res, next) => {
+  req.params.documentId = req.params.documentId;
+  return resetProgress(req, res, next);
 });
 
 router.use("/:documentId", documentReadingRoutes);

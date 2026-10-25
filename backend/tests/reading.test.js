@@ -1,9 +1,10 @@
-// Phase 3: Reading Progress & Session Tracking tests
+// Phase 1: Reading Progress & Session Tracking Backend Tests
 import dotenv from "dotenv";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, "../../.env") });
@@ -11,23 +12,23 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
 const { default: prisma } = await import("../src/config/database.js");
 const {
-  readingProgressService,
   calculateProgressPercentage,
+  saveReadingProgress,
+  resetReadingProgress,
+  getReadingData,
+  getRecentReading,
+  getBookmarks,
 } = await import("../src/features/reading/reading.service.js");
 const {
-  getProgress,
   saveProgress,
-  getUserProgressList,
+  resetProgress,
+  getReading,
 } = await import("../src/features/reading/reading.controller.js");
 const { ForbiddenError, NotFoundError, ValidationError } = await import(
   "../src/shared/utils/errors.js"
 );
 
-describe("Phase 3: Reading Progress Tracking", () => {
-  beforeEach(() => {
-    readingProgressService._resetStore();
-  });
-
+describe("Reading Progress — Phase 1 Backend & Database", () => {
   // -------------------------------------------------------------------------
   // 1. Percentage Calculation Unit Tests
   // -------------------------------------------------------------------------
@@ -45,6 +46,8 @@ describe("Phase 3: Reading Progress Tracking", () => {
       assert.equal(calculateProgressPercentage(5, -10), 0);
       assert.equal(calculateProgressPercentage(null, undefined), 0);
       assert.equal(calculateProgressPercentage("abc", "xyz"), 0);
+      assert.equal(calculateProgressPercentage(NaN, 10), 0);
+      assert.equal(calculateProgressPercentage(5, Infinity), 0);
     });
 
     it("clamps percentages to a maximum of 100%", () => {
@@ -54,107 +57,339 @@ describe("Phase 3: Reading Progress Tracking", () => {
   });
 
   // -------------------------------------------------------------------------
-  // 2. Reading Progress Service Tests
+  // 2. Service & Database Integration Tests
   // -------------------------------------------------------------------------
-  describe("Reading Progress Service", () => {
-    it("saves and retrieves reading progress for a user and document", () => {
-      const saved = readingProgressService.saveProgress(1, 101, {
-        currentPage: 5,
-        totalPages: 20,
+  describe("Reading Progress Service & Database Operations", () => {
+    let testUserA;
+    let testUserB;
+    let docA;
+    let docA2;
+    let docB;
+
+    before(async () => {
+      const suffix = `${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+
+      // Create test users
+      testUserA = await prisma.user.create({
+        data: {
+          name: "User A",
+          email: `user_a_${suffix}@test.com`,
+          passwordHash: "hash",
+        },
       });
 
-      assert.equal(saved.documentId, "101");
-      assert.equal(saved.currentPage, 5);
-      assert.equal(saved.totalPages, 20);
-      assert.equal(saved.percentage, 25);
-      assert.ok(saved.lastReadAt);
+      testUserB = await prisma.user.create({
+        data: {
+          name: "User B",
+          email: `user_b_${suffix}@test.com`,
+          passwordHash: "hash",
+        },
+      });
 
-      const retrieved = readingProgressService.getProgress(1, 101);
-      assert.deepEqual(retrieved, saved);
+      // Create test documents
+      docA = await prisma.document.create({
+        data: {
+          title: "Doc A",
+          fileName: "doc_a.pdf",
+          s3Key: `key_a_${suffix}`,
+          fileSize: 1024,
+          mimeType: "application/pdf",
+          userId: testUserA.id,
+        },
+      });
+
+      docA2 = await prisma.document.create({
+        data: {
+          title: "Doc A2",
+          fileName: "doc_a2.pdf",
+          s3Key: `key_a2_${suffix}`,
+          fileSize: 2048,
+          mimeType: "application/pdf",
+          userId: testUserA.id,
+        },
+      });
+
+      docB = await prisma.document.create({
+        data: {
+          title: "Doc B",
+          fileName: "doc_b.pdf",
+          s3Key: `key_b_${suffix}`,
+          fileSize: 1024,
+          mimeType: "application/pdf",
+          userId: testUserB.id,
+        },
+      });
     });
 
-    it("maintains isolated progress across different users for the same document", () => {
-      readingProgressService.saveProgress(1, 200, { currentPage: 3, totalPages: 10 });
-      readingProgressService.saveProgress(2, 200, { currentPage: 8, totalPages: 10 });
-
-      const user1Progress = readingProgressService.getProgress(1, 200);
-      const user2Progress = readingProgressService.getProgress(2, 200);
-
-      assert.equal(user1Progress.currentPage, 3);
-      assert.equal(user1Progress.percentage, 30);
-
-      assert.equal(user2Progress.currentPage, 8);
-      assert.equal(user2Progress.percentage, 80);
+    after(async () => {
+      // Clean up test data
+      try {
+        if (docA) await prisma.document.delete({ where: { id: docA.id } });
+      } catch {}
+      try {
+        if (docA2) await prisma.document.delete({ where: { id: docA2.id } });
+      } catch {}
+      try {
+        if (docB) await prisma.document.delete({ where: { id: docB.id } });
+      } catch {}
+      try {
+        if (testUserA) await prisma.user.delete({ where: { id: testUserA.id } });
+      } catch {}
+      try {
+        if (testUserB) await prisma.user.delete({ where: { id: testUserB.id } });
+      } catch {}
     });
 
-    it("maintains separate progress across different documents for the same user", () => {
-      readingProgressService.saveProgress(1, 301, { currentPage: 2, totalPages: 10 });
-      readingProgressService.saveProgress(1, 302, { currentPage: 7, totalPages: 10 });
+    it("creates a new progress record with lastPage, furthestPage, and totalPages", async () => {
+      const saved = await saveReadingProgress(testUserA.id, docA.id, 2, 10);
 
-      assert.equal(readingProgressService.getProgress(1, 301).currentPage, 2);
-      assert.equal(readingProgressService.getProgress(1, 302).currentPage, 7);
+      assert.equal(saved.lastPage, 2);
+      assert.equal(saved.furthestPage, 2);
+      assert.equal(saved.totalPages, 10);
+      assert.equal(saved.percentage, 20);
+      assert.equal(saved.userId, testUserA.id);
+      assert.equal(saved.documentId, docA.id);
 
-      const all = readingProgressService.getAllProgressForUser(1);
-      assert.equal(Object.keys(all).length, 2);
-      assert.ok(all["301"]);
-      assert.ok(all["302"]);
+      // Verify in DB
+      const inDb = await prisma.readingProgress.findUnique({
+        where: { userId_documentId: { userId: testUserA.id, documentId: docA.id } },
+      });
+      assert.ok(inDb);
+      assert.equal(inDb.lastPage, 2);
+      assert.equal(inDb.furthestPage, 2);
+      assert.equal(inDb.totalPages, 10);
     });
 
-    it("updates progress when advancing pages without losing totalPages", () => {
-      readingProgressService.saveProgress(1, 401, { currentPage: 1, totalPages: 50 });
-      readingProgressService.saveProgress(1, 401, { currentPage: 10 });
+    it("advances progress from page 2 to page 4", async () => {
+      const updated = await saveReadingProgress(testUserA.id, docA.id, 4, 10);
 
-      const updated = readingProgressService.getProgress(1, 401);
-      assert.equal(updated.currentPage, 10);
-      assert.equal(updated.totalPages, 50);
-      assert.equal(updated.percentage, 20);
+      assert.equal(updated.lastPage, 4);
+      assert.equal(updated.furthestPage, 4);
+      assert.equal(updated.totalPages, 10);
+      assert.equal(updated.percentage, 40);
     });
 
-    it("clears progress when document is deleted", () => {
-      readingProgressService.saveProgress(1, 501, { currentPage: 4, totalPages: 12 });
-      assert.ok(readingProgressService.getProgress(1, 501));
+    it("navigates backward from page 4 to page 2 while preserving furthestPage", async () => {
+      const backward = await saveReadingProgress(testUserA.id, docA.id, 2);
 
-      readingProgressService.clearProgress(1, 501);
-      assert.equal(readingProgressService.getProgress(1, 501), null);
+      // lastPage must reflect the new current position (Resume Reading contract)
+      assert.equal(backward.lastPage, 2);
+      // furthestPage must NOT be reduced
+      assert.equal(backward.furthestPage, 4);
+      // totalPages must be preserved even when omitted in the call
+      assert.equal(backward.totalPages, 10);
+      // percentage is based on furthestPage
+      assert.equal(backward.percentage, 40);
+    });
+
+    it("prevents duplicate progress records on repeated saves", async () => {
+      await saveReadingProgress(testUserA.id, docA.id, 2);
+      await saveReadingProgress(testUserA.id, docA.id, 3);
+      await saveReadingProgress(testUserA.id, docA.id, 2);
+
+      const records = await prisma.readingProgress.findMany({
+        where: { userId: testUserA.id, documentId: docA.id },
+      });
+      assert.equal(records.length, 1);
+    });
+
+    it("validates page and totalPages arguments strictly", async () => {
+      // Non-integer lastPage
+      await assert.rejects(
+        () => saveReadingProgress(testUserA.id, docA.id, 2.5),
+        (err) => err instanceof ValidationError && err.message.includes("lastPage")
+      );
+
+      // Negative lastPage
+      await assert.rejects(
+        () => saveReadingProgress(testUserA.id, docA.id, -1),
+        (err) => err instanceof ValidationError && err.message.includes("lastPage")
+      );
+
+      // Zero lastPage
+      await assert.rejects(
+        () => saveReadingProgress(testUserA.id, docA.id, 0),
+        (err) => err instanceof ValidationError && err.message.includes("lastPage")
+      );
+
+      // Non-integer totalPages
+      await assert.rejects(
+        () => saveReadingProgress(testUserA.id, docA.id, 2, "not-a-number"),
+        (err) => err instanceof ValidationError && err.message.includes("totalPages")
+      );
+
+      // Zero totalPages
+      await assert.rejects(
+        () => saveReadingProgress(testUserA.id, docA.id, 2, 0),
+        (err) => err instanceof ValidationError && err.message.includes("totalPages")
+      );
+
+      // Impossible combination: page > totalPages
+      await assert.rejects(
+        () => saveReadingProgress(testUserA.id, docA.id, 15, 10),
+        (err) => err instanceof ValidationError && err.message.includes("cannot exceed")
+      );
+    });
+
+    it("updates totalPages when a new totalPages value is provided", async () => {
+      const updated = await saveReadingProgress(testUserA.id, docA.id, 5, 20);
+
+      assert.equal(updated.lastPage, 5);
+      assert.equal(updated.furthestPage, 5);
+      assert.equal(updated.totalPages, 20);
+      assert.equal(updated.percentage, 25);
+    });
+
+    it("correctly calculates 100% progress when reaching the final page", async () => {
+      const completed = await saveReadingProgress(testUserA.id, docA.id, 20, 20);
+
+      assert.equal(completed.lastPage, 20);
+      assert.equal(completed.furthestPage, 20);
+      assert.equal(completed.percentage, 100);
+    });
+
+    it("resets progress: lastPage to 1, furthestPage to 0, 0% percentage, preserving totalPages", async () => {
+      const reset = await resetReadingProgress(testUserA.id, docA.id);
+
+      assert.equal(reset.lastPage, 1);
+      assert.equal(reset.furthestPage, 0);
+      assert.equal(reset.totalPages, 20);
+      assert.equal(reset.percentage, 0);
+
+      // Verify the record is preserved in the database (not deleted)
+      const inDb = await prisma.readingProgress.findUnique({
+        where: { userId_documentId: { userId: testUserA.id, documentId: docA.id } },
+      });
+      assert.ok(inDb);
+      assert.equal(inDb.lastPage, 1);
+      assert.equal(inDb.furthestPage, 0);
+      assert.equal(inDb.totalPages, 20);
+    });
+
+    it("forbids a user from modifying or resetting another user's document progress", async () => {
+      // User B attempts to save progress on User A's document
+      await assert.rejects(
+        () => saveReadingProgress(testUserB.id, docA.id, 3, 10),
+        (err) => err instanceof ForbiddenError && err.statusCode === 403
+      );
+
+      // User B attempts to reset User A's document progress
+      await assert.rejects(
+        () => resetReadingProgress(testUserB.id, docA.id),
+        (err) => err instanceof ForbiddenError && err.statusCode === 403
+      );
+    });
+
+    it("throws NotFoundError when document does not exist", async () => {
+      await assert.rejects(
+        () => saveReadingProgress(testUserA.id, 999999, 1),
+        (err) => err instanceof NotFoundError && err.statusCode === 404
+      );
+
+      await assert.rejects(
+        () => resetReadingProgress(testUserA.id, 999999),
+        (err) => err instanceof NotFoundError && err.statusCode === 404
+      );
+    });
+
+    it("throws NotFoundError when attempting to reset a document with no progress record", async () => {
+      // docA2 exists but has never had progress saved
+      await assert.rejects(
+        () => resetReadingProgress(testUserA.id, docA2.id),
+        (err) => err instanceof NotFoundError && err.statusCode === 404
+      );
+    });
+
+    it("preserves the Resume Reading contract in getReadingData, getRecentReading, and getBookmarks", async () => {
+      // Save progress on docA
+      await saveReadingProgress(testUserA.id, docA.id, 7, 20);
+
+      // 1. getReadingData
+      const readingData = await getReadingData(testUserA.id, docA.id);
+      assert.ok(readingData.progress);
+      assert.equal(readingData.progress.lastPage, 7);
+      assert.equal(readingData.progress.furthestPage, 7);
+      assert.equal(readingData.progress.totalPages, 20);
+      assert.equal(readingData.progress.percentage, 35);
+      assert.ok(Array.isArray(readingData.notes));
+      assert.ok(Array.isArray(readingData.highlights));
+
+      // 2. getRecentReading
+      const recent = await getRecentReading(testUserA.id);
+      const docItem = recent.find((r) => r.documentId === docA.id);
+      assert.ok(docItem);
+      assert.equal(docItem.lastPage, 7);
+      assert.equal(docItem.furthestPage, 7);
+      assert.equal(docItem.totalPages, 20);
+      assert.equal(docItem.percentage, 35);
+
+      // 3. getBookmarks
+      const bookmarks = await getBookmarks(testUserA.id);
+      const bItem = bookmarks.find((b) => b.documentId === docA.id);
+      assert.ok(bItem);
+      assert.equal(bItem.lastPage, 7);
+      assert.equal(bItem.furthestPage, 7);
+      assert.equal(bItem.totalPages, 20);
+      assert.equal(bItem.percentage, 35);
     });
   });
 
   // -------------------------------------------------------------------------
-  // 3. Controller & Security Verification Tests
+  // 3. Controller Layer Tests
   // -------------------------------------------------------------------------
-  describe("Controller & Document Ownership Security", () => {
-    let originalFindUnique;
+  describe("Reading Controller Integration", () => {
+    let testUser;
+    let testDoc;
 
-    before(() => {
-      originalFindUnique = prisma.document.findUnique.bind(prisma.document);
+    before(async () => {
+      const suffix = `ctrl_${Date.now()}`;
+      testUser = await prisma.user.create({
+        data: {
+          name: "Ctrl User",
+          email: `${suffix}@test.com`,
+          passwordHash: "hash",
+        },
+      });
+
+      testDoc = await prisma.document.create({
+        data: {
+          title: "Ctrl Doc",
+          fileName: "ctrl.pdf",
+          s3Key: `ctrl_${suffix}`,
+          fileSize: 1024,
+          mimeType: "application/pdf",
+          userId: testUser.id,
+        },
+      });
     });
 
-    after(() => {
-      prisma.document.findUnique = originalFindUnique;
+    after(async () => {
+      try {
+        if (testDoc) await prisma.document.delete({ where: { id: testDoc.id } });
+      } catch {}
+      try {
+        if (testUser) await prisma.user.delete({ where: { id: testUser.id } });
+      } catch {}
     });
 
-    it("allows the owner to save and get reading progress", async () => {
-      const mockDoc = { id: 601, userId: 10, title: "Owner Doc" };
-      prisma.document.findUnique = async () => mockDoc;
-
-      let savedResult;
+    it("saveProgress handles lastPage and totalPages from request body", async () => {
+      let savedResponse;
       const mockRes = {
         status(code) {
           assert.equal(code, 200);
           return this;
         },
         json(body) {
-          savedResult = body;
+          savedResponse = body;
           return this;
         },
       };
 
-      // Save progress
       await saveProgress(
         {
-          params: { documentId: "601" },
-          user: { id: 10 },
-          body: { currentPage: 4, totalPages: 10 },
+          params: { documentId: String(testDoc.id) },
+          user: { id: testUser.id },
+          body: { lastPage: 3, totalPages: 15 },
         },
         mockRes,
         (err) => {
@@ -162,96 +397,74 @@ describe("Phase 3: Reading Progress Tracking", () => {
         }
       );
 
-      assert.equal(savedResult.success, true);
-      assert.equal(savedResult.data.currentPage, 4);
-      assert.equal(savedResult.data.percentage, 40);
+      assert.equal(savedResponse.success, true);
+      assert.equal(savedResponse.data.lastPage, 3);
+      assert.equal(savedResponse.data.furthestPage, 3);
+      assert.equal(savedResponse.data.totalPages, 15);
+      assert.equal(savedResponse.data.percentage, 20);
+    });
 
-      // Get progress
-      let getResult;
-      const mockGetRes = {
+    it("saveProgress supports legacy currentPage parameter in request body", async () => {
+      let savedResponse;
+      const mockRes = {
         status(code) {
           assert.equal(code, 200);
           return this;
         },
         json(body) {
-          getResult = body;
+          savedResponse = body;
           return this;
         },
       };
 
-      await getProgress(
+      await saveProgress(
         {
-          params: { documentId: "601" },
-          user: { id: 10 },
+          params: { documentId: String(testDoc.id) },
+          user: { id: testUser.id },
+          body: { currentPage: 6 },
         },
-        mockGetRes,
+        mockRes,
         (err) => {
           if (err) throw err;
         }
       );
 
-      assert.equal(getResult.success, true);
-      assert.equal(getResult.data.currentPage, 4);
+      assert.equal(savedResponse.success, true);
+      assert.equal(savedResponse.data.lastPage, 6);
+      assert.equal(savedResponse.data.furthestPage, 6);
+      assert.equal(savedResponse.data.totalPages, 15);
+      assert.equal(savedResponse.data.percentage, 40);
     });
 
-    it("forbids another user from accessing reading progress of a document they do not own", async () => {
-      const mockDoc = { id: 701, userId: 99, title: "Secret Doc" };
-      prisma.document.findUnique = async () => mockDoc;
-
-      let caughtError = null;
-      await getProgress(
-        {
-          params: { documentId: "701" },
-          user: { id: 5 }, // Different user
+    it("resetProgress resets progress via controller and returns 200", async () => {
+      let resetResponse;
+      const mockRes = {
+        status(code) {
+          assert.equal(code, 200);
+          return this;
         },
-        {},
+        json(body) {
+          resetResponse = body;
+          return this;
+        },
+      };
+
+      await resetProgress(
+        {
+          params: { documentId: String(testDoc.id) },
+          user: { id: testUser.id },
+        },
+        mockRes,
         (err) => {
-          caughtError = err;
+          if (err) throw err;
         }
       );
 
-      assert.ok(caughtError instanceof ForbiddenError);
-      assert.equal(caughtError.statusCode, 403);
-    });
-
-    it("rejects saving progress with invalid currentPage (< 1)", async () => {
-      const mockDoc = { id: 801, userId: 10, title: "Doc" };
-      prisma.document.findUnique = async () => mockDoc;
-
-      let caughtError = null;
-      await saveProgress(
-        {
-          params: { documentId: "801" },
-          user: { id: 10 },
-          body: { currentPage: 0, totalPages: 10 },
-        },
-        {},
-        (err) => {
-          caughtError = err;
-        }
-      );
-
-      assert.ok(caughtError instanceof ValidationError);
-      assert.equal(caughtError.statusCode, 400);
-    });
-
-    it("throws NotFoundError when document does not exist in database", async () => {
-      prisma.document.findUnique = async () => null;
-
-      let caughtError = null;
-      await getProgress(
-        {
-          params: { documentId: "9999" },
-          user: { id: 1 },
-        },
-        {},
-        (err) => {
-          caughtError = err;
-        }
-      );
-
-      assert.ok(caughtError instanceof NotFoundError);
-      assert.equal(caughtError.statusCode, 404);
+      assert.equal(resetResponse.success, true);
+      assert.equal(resetResponse.data.lastPage, 1);
+      assert.equal(resetResponse.data.furthestPage, 0);
+      assert.equal(resetResponse.data.totalPages, 15);
+      assert.equal(resetResponse.data.percentage, 0);
     });
   });
 });

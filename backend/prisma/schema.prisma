@@ -78,8 +78,10 @@ enum HighlightColor {
 
 model ReadingProgress {
   id         Int      @id @default(autoincrement())
-  lastPage   Int
-  updatedAt  DateTime @updatedAt
+  lastPage     Int      @default(1)
+  furthestPage Int      @default(0)
+  totalPages   Int?
+  updatedAt    DateTime @updatedAt
 
   userId     Int
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
