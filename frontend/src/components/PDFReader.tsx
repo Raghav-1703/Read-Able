@@ -311,20 +311,43 @@ export default function PDFReader({ source }: PDFReaderProps) {
     };
   }, [currentPage, pageText]);
 
-  // Track active reading time toward daily reading goal
+  // Track active reading time toward daily reading goal with user activity & idle detection
   useEffect(() => {
-    let readingSeconds = 0;
+    let activeSeconds = 0;
+    let lastActivityTime = Date.now();
+    const IDLE_THRESHOLD_MS = 45000; // 45 seconds of inactivity = idle
+
+    const onUserActivity = () => {
+      lastActivityTime = Date.now();
+    };
+
+    const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "wheel"];
+    events.forEach((evt) => window.addEventListener(evt, onUserActivity, { passive: true }));
+
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "visible") {
-        readingSeconds += 10;
-        if (readingSeconds >= 60) {
-          recordReadingMinutes(1);
-          readingSeconds = 0;
+        const isSpeaking = typeof window !== "undefined" && window.speechSynthesis && window.speechSynthesis.speaking;
+        const isUserActive = (Date.now() - lastActivityTime < IDLE_THRESHOLD_MS) || Boolean(isSpeaking);
+
+        if (isUserActive) {
+          activeSeconds += 10;
+          if (activeSeconds >= 60) {
+            recordReadingMinutes(1, undefined, source?.documentId);
+            activeSeconds = 0;
+          }
         }
       }
     }, 10000);
-    return () => clearInterval(interval);
-  }, []);
+
+    return () => {
+      clearInterval(interval);
+      events.forEach((evt) => window.removeEventListener(evt, onUserActivity));
+      // Credit active time if >= 30s upon leaving reader so user doesn't lose progress
+      if (activeSeconds >= 30) {
+        recordReadingMinutes(1, undefined, source?.documentId);
+      }
+    };
+  }, [source?.documentId]);
 
   // Valid highlights for active page (Item 2: skip non-matching text or old rects form)
   const validPageHighlights = useMemo(() => {
