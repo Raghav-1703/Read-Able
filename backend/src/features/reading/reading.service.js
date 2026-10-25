@@ -8,6 +8,32 @@ import prisma from "../../config/database.js";
 import { NotFoundError, ForbiddenError, ValidationError } from "../../shared/utils/errors.js";
 
 /**
+ * Calculates reading progress percentage safely, clamped between 0 and 100.
+ *
+ * @param {number|string} furthestPage
+ * @param {number|string} totalPages
+ * @returns {number} Integer percentage between 0 and 100
+ */
+export const calculateProgressPercentage = (furthestPage, totalPages) => {
+  const furthest = Number(furthestPage);
+  const total = Number(totalPages);
+
+  if (
+    isNaN(furthest) ||
+    isNaN(total) ||
+    !isFinite(furthest) ||
+    !isFinite(total) ||
+    furthest <= 0 ||
+    total <= 0
+  ) {
+    return 0;
+  }
+
+  const pct = Math.round((furthest / total) * 100);
+  return Math.min(100, Math.max(0, pct));
+};
+
+/**
  * Validates document existence and user ownership.
  * Throws NotFoundError if document does not exist, or ForbiddenError if not owned by user.
  *
@@ -57,8 +83,15 @@ export const getReadingData = async (userId, documentId) => {
     }),
   ]);
 
+  const progressWithPct = progress
+    ? {
+        ...progress,
+        percentage: calculateProgressPercentage(progress.furthestPage, progress.totalPages),
+      }
+    : null;
+
   return {
-    progress: progress || null,
+    progress: progressWithPct,
     notes: notes || [],
     highlights: highlights || [],
   };
@@ -66,22 +99,116 @@ export const getReadingData = async (userId, documentId) => {
 
 /**
  * Upsert reading progress for a user and document.
+ * Tracks lastPage (for Resume Reading), furthestPage (high-water mark), and totalPages when known.
+ *
+ * @param {number} userId
+ * @param {number|string} documentId
+ * @param {number|string} lastPage
+ * @param {number|string} [totalPages]
  */
-export const saveReadingProgress = async (userId, documentId, lastPage) => {
+export const saveReadingProgress = async (userId, documentId, lastPage, totalPages) => {
   const docId = parseInt(documentId, 10);
   await verifyDocumentOwnership(docId, userId);
 
-  const page = parseInt(lastPage, 10);
-  if (isNaN(page) || page < 1) {
+  const page = Number(lastPage);
+  if (isNaN(page) || page < 1 || !Number.isInteger(page)) {
     throw new ValidationError("lastPage must be an integer >= 1");
   }
 
-  return await prisma.readingProgress.upsert({
+  let total = undefined;
+  if (totalPages !== undefined && totalPages !== null) {
+    const parsedTotal = Number(totalPages);
+    if (isNaN(parsedTotal) || parsedTotal < 1 || !Number.isInteger(parsedTotal)) {
+      throw new ValidationError("totalPages must be an integer >= 1");
+    }
+    total = parsedTotal;
+  }
+
+  // Fetch existing record to check furthestPage and existing totalPages
+  const existing = await prisma.readingProgress.findUnique({
     where: { userId_documentId: { userId, documentId: docId } },
-    update: { lastPage: page },
-    create: { userId, documentId: docId, lastPage: page },
   });
+
+  const effectiveTotalPages = total !== undefined ? total : existing?.totalPages;
+
+  if (effectiveTotalPages !== undefined && effectiveTotalPages !== null) {
+    if (page > effectiveTotalPages) {
+      throw new ValidationError("lastPage cannot exceed totalPages");
+    }
+  }
+
+  // Update furthestPage: highest page reached, never reduced when navigating backward
+  let furthestPage = Math.max(existing?.furthestPage ?? 0, page);
+  if (effectiveTotalPages !== undefined && effectiveTotalPages !== null && furthestPage > effectiveTotalPages) {
+    furthestPage = effectiveTotalPages;
+  }
+
+  const updateData = {
+    lastPage: page,
+    furthestPage,
+  };
+  if (total !== undefined) {
+    updateData.totalPages = total;
+  }
+
+  const createData = {
+    userId,
+    documentId: docId,
+    lastPage: page,
+    furthestPage,
+    ...(total !== undefined ? { totalPages: total } : {}),
+  };
+
+  const saved = await prisma.readingProgress.upsert({
+    where: { userId_documentId: { userId, documentId: docId } },
+    update: updateData,
+    create: createData,
+  });
+
+  return {
+    ...saved,
+    percentage: calculateProgressPercentage(saved.furthestPage, saved.totalPages),
+  };
 };
+
+/**
+ * Reset reading progress for a user and document.
+ * Sets lastPage = 1 (start of document for Resume Reading) and furthestPage = 0 (0% progress).
+ * Preserves totalPages if already known.
+ *
+ * @param {number} userId
+ * @param {number|string} documentId
+ */
+export const resetReadingProgress = async (userId, documentId) => {
+  const docId = parseInt(documentId, 10);
+  await verifyDocumentOwnership(docId, userId);
+
+  const existing = await prisma.readingProgress.findUnique({
+    where: { userId_documentId: { userId, documentId: docId } },
+  });
+
+  if (!existing) {
+    throw new NotFoundError("Reading progress not found");
+  }
+
+  const reset = await prisma.readingProgress.update({
+    where: { userId_documentId: { userId, documentId: docId } },
+    data: {
+      lastPage: 1,
+      furthestPage: 0,
+    },
+  });
+
+  return {
+    ...reset,
+    percentage: calculateProgressPercentage(reset.furthestPage, reset.totalPages),
+  };
+};
+
+/**
+ * Alias for resetReadingProgress.
+ */
+export const resetProgress = resetReadingProgress;
 
 /**
  * Create a new note.
@@ -303,7 +430,7 @@ export const deleteBatchHighlights = async (userId, documentId, ids) => {
 /**
  * GET /api/reading/recent
  * Dashboard only: last 5 read documents (ReadingProgress by updatedAt desc, take 5):
- * { documentId, title, fileName, lastPage, updatedAt }
+ * { documentId, title, fileName, lastPage, furthestPage, totalPages, percentage, updatedAt }
  */
 export const getRecentReading = async (userId) => {
   const progressList = await prisma.readingProgress.findMany({
@@ -324,6 +451,9 @@ export const getRecentReading = async (userId) => {
       title: p.document.title,
       fileName: p.document.fileName,
       lastPage: p.lastPage,
+      furthestPage: p.furthestPage,
+      totalPages: p.totalPages,
+      percentage: calculateProgressPercentage(p.furthestPage, p.totalPages),
       updatedAt: p.updatedAt,
     }));
 };
@@ -331,7 +461,7 @@ export const getRecentReading = async (userId) => {
 /**
  * GET /api/reading/bookmarks
  * ALL user documents, no limit:
- * { documentId, title, fileName, lastPage, updatedAt },
+ * { documentId, title, fileName, lastPage, furthestPage, totalPages, percentage, updatedAt },
  * ordered by ReadingProgress.updatedAt desc
  */
 export const getBookmarks = async (userId) => {
@@ -352,6 +482,9 @@ export const getBookmarks = async (userId) => {
       title: p.document.title,
       fileName: p.document.fileName,
       lastPage: p.lastPage,
+      furthestPage: p.furthestPage,
+      totalPages: p.totalPages,
+      percentage: calculateProgressPercentage(p.furthestPage, p.totalPages),
       updatedAt: p.updatedAt,
     }));
 };
@@ -404,10 +537,26 @@ export const clearProgress = async (userId, documentId) => {
   return true;
 };
 
+/**
+ * Service adapter for reading progress operations.
+ */
+export const readingProgressService = {
+  saveProgress: (userId, documentId, { currentPage, lastPage, totalPages }) => {
+    const page = lastPage !== undefined ? lastPage : currentPage;
+    return saveReadingProgress(userId, documentId, page, totalPages);
+  },
+  resetProgress: (userId, documentId) => resetReadingProgress(userId, documentId),
+  getReadingData,
+  calculateProgressPercentage,
+};
+
 const readingService = {
   verifyDocumentOwnership,
+  calculateProgressPercentage,
   getReadingData,
   saveReadingProgress,
+  resetReadingProgress,
+  resetProgress,
   createNote,
   updateNote,
   deleteNote,
@@ -418,6 +567,7 @@ const readingService = {
   getBookmarks,
   getUserNotes,
   clearProgress,
+  readingProgressService,
 };
 
 export default readingService;

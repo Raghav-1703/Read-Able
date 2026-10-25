@@ -8,6 +8,7 @@ import { Router } from "express";
 import {
   getReading,
   saveProgress,
+  resetProgress,
   createNote,
   updateNote,
   deleteNote,
@@ -21,6 +22,8 @@ const router = Router({ mergeParams: true });
 
 router.get("/reading", getReading);
 router.put("/progress", saveProgress);
+router.post("/progress/reset", resetProgress);
+router.delete("/progress", resetProgress);
 
 router.post("/notes", createNote);
 router.patch("/notes/:id", updateNote);

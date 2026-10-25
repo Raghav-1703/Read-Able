@@ -27,18 +27,30 @@ export const getReading = async (req, res, next) => {
   }
 };
 
+export const getProgress = getReading;
+
 export const saveProgress = async (req, res, next) => {
   try {
     const documentId = getDocumentIdParam(req);
-    const { lastPage, currentPage } = req.body || {};
+    const { lastPage, currentPage, totalPages } = req.body || {};
     const page = lastPage !== undefined ? lastPage : currentPage;
 
     if (page === undefined || page === null) {
       throw new ValidationError("lastPage is required");
     }
 
-    const saved = await readingService.saveReadingProgress(req.user.id, documentId, page);
+    const saved = await readingService.saveReadingProgress(req.user.id, documentId, page, totalPages);
     sendSuccess(res, saved, "Reading progress saved successfully");
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const resetProgress = async (req, res, next) => {
+  try {
+    const documentId = getDocumentIdParam(req);
+    const saved = await readingService.resetReadingProgress(req.user.id, documentId);
+    sendSuccess(res, saved, "Reading progress reset successfully");
   } catch (err) {
     next(err);
   }

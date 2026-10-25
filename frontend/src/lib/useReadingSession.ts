@@ -114,7 +114,7 @@ export function useReadingSession(
         lastSavedPageRef.current = startPage;
 
         // Upsert reading progress immediately on document open (Requirement 1)
-        readingApi.putProgress(docIdStr, startPage).catch(() => {});
+        readingApi.putProgress(docIdStr, startPage, totalPagesRef.current).catch(() => {});
 
         setHighlights(data.highlights || []);
         setNotes(
@@ -162,7 +162,7 @@ export function useReadingSession(
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ lastPage: pageToSave }),
+        body: JSON.stringify({ lastPage: pageToSave, totalPages: totalPagesRef.current }),
         keepalive: true,
       }).catch(() => {});
     } catch {
@@ -179,7 +179,7 @@ export function useReadingSession(
     progressTimerRef.current = setTimeout(async () => {
       if (isCancelledRef.current) return;
       try {
-        await readingApi.putProgress(docIdStr, currentPage);
+        await readingApi.putProgress(docIdStr, currentPage, totalPagesRef.current);
         lastSavedPageRef.current = currentPage;
       } catch {
         // Will retry or flush on exit (ignore 404s quietly)
@@ -239,7 +239,7 @@ export function useReadingSession(
 
       // Autosave bookmark immediately on jump
       lastSavedPageRef.current = target;
-      readingApi.putProgress(docIdStr, target).catch(() => {});
+      readingApi.putProgress(docIdStr, target, totalPagesRef.current).catch(() => {});
     },
     [totalPages, docIdStr]
   );
