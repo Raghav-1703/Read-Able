@@ -177,7 +177,12 @@ const saveRawUserStats = (userId, data) => {
   const filePath = getStatsFilePath(userId);
   const tempPath = `${filePath}.${Date.now()}.tmp`;
   fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(tempPath, filePath);
+  try {
+    fs.renameSync(tempPath, filePath);
+  } catch (err) {
+    fs.copyFileSync(tempPath, filePath);
+    try { fs.unlinkSync(tempPath); } catch (_) {}
+  }
 };
 
 /**

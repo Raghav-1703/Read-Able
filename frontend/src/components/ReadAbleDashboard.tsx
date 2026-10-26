@@ -859,7 +859,7 @@ const handleFileSelected = async (
                         onClick={() => {
                           setSearchQuery('');
                           setSearchOpen(false);
-                          navigate({ to: '/documents//read', params: { id: String(d.id) }, search: { page: 1 } });
+                          navigate({ to: '/documents/$id/read', params: { id: String(d.id) }, search: { page: 1 } });
                         }}
                         style={{
                           padding: '10px 16px',
