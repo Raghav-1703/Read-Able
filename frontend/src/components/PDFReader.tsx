@@ -165,6 +165,105 @@ export default function PDFReader({ source }: PDFReaderProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingDoc, setDeletingDoc] = useState(false);
 
+  // ---------------------------------------------------------------------------
+  // Focus Mode & Focus Timer state
+  // ---------------------------------------------------------------------------
+  type FocusTimerMode = "pomodoro_focus" | "pomodoro_break" | "stopwatch";
+  const [focusMode, setFocusMode] = useState(false);
+  const [timerMode, setTimerMode] = useState<FocusTimerMode>("pomodoro_focus");
+  const [timerSeconds, setTimerSeconds] = useState(25 * 60); // 25m default
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerPresetOpen, setTimerPresetOpen] = useState(false);
+  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const selectTimerPreset = (mode: FocusTimerMode) => {
+    setTimerRunning(false);
+    setTimerMode(mode);
+    if (mode === "pomodoro_focus") {
+      setTimerSeconds(25 * 60);
+    } else if (mode === "pomodoro_break") {
+      setTimerSeconds(5 * 60);
+    } else {
+      setTimerSeconds(0);
+    }
+    setTimerPresetOpen(false);
+  };
+
+  const toggleTimer = () => {
+    if (timerSeconds === 0 && timerMode !== "stopwatch") {
+      if (timerMode === "pomodoro_focus") setTimerSeconds(25 * 60);
+      else if (timerMode === "pomodoro_break") setTimerSeconds(5 * 60);
+    }
+    setTimerRunning((prev) => !prev);
+  };
+
+  const resetTimer = () => {
+    setTimerRunning(false);
+    if (timerMode === "pomodoro_focus") setTimerSeconds(25 * 60);
+    else if (timerMode === "pomodoro_break") setTimerSeconds(5 * 60);
+    else setTimerSeconds(0);
+  };
+
+  // Timer interval effect
+  useEffect(() => {
+    if (timerRunning) {
+      timerIntervalRef.current = setInterval(() => {
+        setTimerSeconds((prev) => {
+          if (timerMode === "stopwatch") {
+            return prev + 1;
+          } else {
+            if (prev <= 1) {
+              setTimerRunning(false);
+              showToast(
+                timerMode === "pomodoro_focus"
+                  ? "🎉 25-minute Focus Session complete! Time for a break."
+                  : "🔔 Break over! Ready to focus again?"
+              );
+              return 0;
+            }
+            return prev - 1;
+          }
+        });
+      }, 1000);
+    } else {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    }
+    return () => {
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+    };
+  }, [timerRunning, timerMode, showToast]);
+
+  const formatTimerDisplay = (totalSec: number) => {
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return String(mins).padStart(2, "0") + ":" + String(secs).padStart(2, "0");
+  };
+
+  const enterFocusMode = () => {
+    setFocusMode(true);
+    setPrefsOpen(false);
+    setNotesPanelOpen(false);
+    setHighlightMenuOpen(false);
+    showToast("🎯 Entered Focus Mode. Press Esc anytime to exit.");
+  };
+
+  const exitFocusMode = () => {
+    setFocusMode(false);
+    setTimerPresetOpen(false);
+    showToast("Exited Focus Mode.");
+  };
+
+  // Escape key exits Focus Mode
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && focusMode) {
+        exitFocusMode();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [focusMode]);
+
   const handleDeleteCurrentDocument = async () => {
     setDeletingDoc(true);
     // Cancel pending autosave timers and in-flight saves (Requirement 3)
@@ -489,6 +588,9 @@ export default function PDFReader({ source }: PDFReaderProps) {
       if (!highlightMenuRef.current?.contains(target)) {
         setHighlightMenuOpen(false);
       }
+      if (target && !target.closest(".focus-timer-dropdown")) {
+        setTimerPresetOpen(false);
+      }
       if (aiDropdownRef.current && !aiDropdownRef.current.contains(target)) {
         setAiDropdown(null);
       }
@@ -643,9 +745,387 @@ export default function PDFReader({ source }: PDFReaderProps) {
       onTouchEnd={handleSelectionDetection}
     >
       {/* -------------------------------------------------------------------- */}
-      {/* Top Navigation & Toolbar                                             */}
+      {/* Top Navigation & Toolbar (Standard or Focus Mode)                     */}
       {/* -------------------------------------------------------------------- */}
-      <header
+      {focusMode ? (
+        <header
+          style={{
+            minHeight: 52,
+            background: themeColors.toolbar,
+            borderBottom: `1px solid ${themeColors.border}`,
+            padding: "6px 16px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            zIndex: 30,
+            flexShrink: 0,
+            flexWrap: "wrap",
+            transition: "all 0.2s ease",
+          }}
+        >
+          {/* Left: Focus Badge & Document Title */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                background: themeColors.accentTint,
+                color: themeColors.accent,
+                padding: "4px 8px",
+                borderRadius: 6,
+                fontSize: "0.75rem",
+                fontWeight: 700,
+                letterSpacing: "0.02em",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span>🎯</span>
+              <span>FOCUS MODE</span>
+            </div>
+            <span
+              style={{
+                fontSize: "0.875rem",
+                fontWeight: 500,
+                color: themeColors.textMuted,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: "200px",
+              }}
+              title={source.title}
+            >
+              {source.title}
+            </span>
+          </div>
+
+          {/* Center: Page Navigation & Quick Text Size */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              onClick={prevPage}
+              disabled={currentPage <= 1}
+              title="Previous page (Left Arrow)"
+              style={{
+                background: themeColors.btnBg,
+                border: `1px solid ${themeColors.border}`,
+                color: currentPage <= 1 ? themeColors.textMuted : themeColors.text,
+                opacity: currentPage <= 1 ? 0.4 : 1,
+                borderRadius: 6,
+                padding: "4px 8px",
+                fontSize: "0.8125rem",
+                cursor: currentPage <= 1 ? "not-allowed" : "pointer",
+                fontWeight: 600,
+              }}
+            >
+              ←
+            </button>
+
+            <form
+              onSubmit={handlePageInputSubmit}
+              style={{ display: "flex", alignItems: "center", gap: 4 }}
+            >
+              <input
+                type="number"
+                min={1}
+                max={totalPages}
+                value={pageInput}
+                onChange={(e) => setPageInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    handlePageInputSubmit(e);
+                  }
+                }}
+                title="Go to page"
+                aria-label="Go to page"
+                style={{
+                  width: 44,
+                  textAlign: "center",
+                  background: themeColors.bg,
+                  color: themeColors.text,
+                  border: `1px solid ${themeColors.border}`,
+                  borderRadius: 6,
+                  padding: "3px 2px",
+                  fontSize: "0.8125rem",
+                  fontWeight: 600,
+                  outline: "none",
+                }}
+              />
+              <span style={{ fontSize: "0.75rem", color: themeColors.textMuted }}>
+                / {totalPages}
+              </span>
+            </form>
+
+            <button
+              type="button"
+              onClick={nextPage}
+              disabled={currentPage >= totalPages}
+              title="Next page (Right Arrow)"
+              style={{
+                background: themeColors.btnBg,
+                border: `1px solid ${themeColors.border}`,
+                color: currentPage >= totalPages ? themeColors.textMuted : themeColors.text,
+                opacity: currentPage >= totalPages ? 0.4 : 1,
+                borderRadius: 6,
+                padding: "4px 8px",
+                fontSize: "0.8125rem",
+                cursor: currentPage >= totalPages ? "not-allowed" : "pointer",
+                fontWeight: 600,
+              }}
+            >
+              →
+            </button>
+
+            {/* Quick Text Size Adjuster */}
+            {activeViewMode === "text" && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 3,
+                  marginLeft: 6,
+                  background: themeColors.btnBg,
+                  borderRadius: 6,
+                  padding: "2px 4px",
+                  border: `1px solid ${themeColors.border}`,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => changeFontSize(-2)}
+                  disabled={settings.fontSize <= 14}
+                  title="Decrease text size"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: settings.fontSize <= 14 ? themeColors.textMuted : themeColors.text,
+                    cursor: settings.fontSize <= 14 ? "default" : "pointer",
+                    padding: "2px 6px",
+                    fontSize: "0.75rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  A-
+                </button>
+                <span style={{ fontSize: "0.6875rem", color: themeColors.textMuted }}>
+                  {settings.fontSize}px
+                </span>
+                <button
+                  type="button"
+                  onClick={() => changeFontSize(2)}
+                  disabled={settings.fontSize >= 32}
+                  title="Increase text size"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: settings.fontSize >= 32 ? themeColors.textMuted : themeColors.text,
+                    cursor: settings.fontSize >= 32 ? "default" : "pointer",
+                    padding: "2px 6px",
+                    fontSize: "0.75rem",
+                    fontWeight: 700,
+                  }}
+                >
+                  A+
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Right: Optional Focus Timer & Exit Button */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, position: "relative" }}>
+            {/* Focus Timer Widget */}
+            <div
+              className="focus-timer-dropdown"
+              style={{
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+                background: themeColors.btnBg,
+                border: `1px solid ${timerRunning ? themeColors.accent : themeColors.border}`,
+                borderRadius: 8,
+                padding: "3px 8px",
+                gap: 6,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setTimerPresetOpen((prev) => !prev)}
+                title="Select timer mode (Pomodoro 25m, Break 5m, Stopwatch)"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: themeColors.text,
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "2px 4px",
+                }}
+              >
+                <span>⏱️</span>
+                <span style={{ fontFamily: "monospace", fontSize: "0.875rem", fontWeight: 700 }}>
+                  {formatTimerDisplay(timerSeconds)}
+                </span>
+                <span style={{ fontSize: "0.625rem", color: themeColors.textMuted }}>
+                  {timerMode === "pomodoro_focus" ? "25m" : timerMode === "pomodoro_break" ? "5m" : "Up"}
+                </span>
+                <span style={{ fontSize: "0.6rem", opacity: 0.7 }}>▼</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleTimer}
+                title={timerRunning ? "Pause timer" : "Start timer"}
+                style={{
+                  background: timerRunning ? themeColors.accent : "transparent",
+                  color: timerRunning ? "#fff" : themeColors.accent,
+                  border: `1px solid ${themeColors.accent}`,
+                  borderRadius: 6,
+                  padding: "3px 8px",
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 3,
+                }}
+              >
+                {timerRunning ? "⏸ Pause" : "▶ Start"}
+              </button>
+
+              <button
+                type="button"
+                onClick={resetTimer}
+                title="Reset timer"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: themeColors.textMuted,
+                  fontSize: "0.8125rem",
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                }}
+              >
+                ↺
+              </button>
+
+              {/* Timer Preset Dropdown */}
+              {timerPresetOpen && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 38,
+                    left: 0,
+                    width: 190,
+                    background: themeColors.toolbar,
+                    border: `1px solid ${themeColors.border}`,
+                    borderRadius: 8,
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+                    padding: 4,
+                    zIndex: 60,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectTimerPreset("pomodoro_focus")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: timerMode === "pomodoro_focus" ? themeColors.accentTint : "transparent",
+                      color: timerMode === "pomodoro_focus" ? themeColors.accent : themeColors.text,
+                      fontWeight: timerMode === "pomodoro_focus" ? 700 : 500,
+                      fontSize: "0.8125rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span>🎯 25m Focus</span>
+                    <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>Pomodoro</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => selectTimerPreset("pomodoro_break")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: timerMode === "pomodoro_break" ? themeColors.accentTint : "transparent",
+                      color: timerMode === "pomodoro_break" ? themeColors.accent : themeColors.text,
+                      fontWeight: timerMode === "pomodoro_break" ? 700 : 500,
+                      fontSize: "0.8125rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span>☕ 5m Break</span>
+                    <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>Short Break</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => selectTimerPreset("stopwatch")}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "6px 10px",
+                      borderRadius: 6,
+                      border: "none",
+                      background: timerMode === "stopwatch" ? themeColors.accentTint : "transparent",
+                      color: timerMode === "stopwatch" ? themeColors.accent : themeColors.text,
+                      fontWeight: timerMode === "stopwatch" ? 700 : 500,
+                      fontSize: "0.8125rem",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span>⏱️ Stopwatch</span>
+                    <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>Count up</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Exit Focus Mode Button */}
+            <button
+              type="button"
+              onClick={exitFocusMode}
+              title="Exit Focus Mode (Esc)"
+              style={{
+                background: themeColors.accent,
+                color: "#FFFFFF",
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 14px",
+                fontSize: "0.8125rem",
+                fontWeight: 600,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                boxShadow: "0 2px 8px rgba(0,0,0,0.12)",
+                transition: "all 0.15s ease",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span>✕ Exit Focus</span>
+              <span style={{ fontSize: "0.6875rem", opacity: 0.85, fontWeight: 500 }}>(Esc)</span>
+            </button>
+          </div>
+        </header>
+      ) : (
+        <header
         style={{
           height: 56,
           background: themeColors.toolbar,
@@ -1095,6 +1575,38 @@ export default function PDFReader({ source }: PDFReaderProps) {
             </button>
           )}
 
+          {/* Focus Mode Entry Button */}
+          <button
+            type="button"
+            onClick={enterFocusMode}
+            title="Enter Focus Mode (Distraction-free reading)"
+            style={{
+              background: themeColors.btnBg,
+              border: `1px solid ${themeColors.border}`,
+              color: themeColors.text,
+              borderRadius: 8,
+              padding: "6px 10px",
+              fontSize: "0.8125rem",
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              transition: "all 0.15s ease",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = themeColors.accent;
+              e.currentTarget.style.color = themeColors.accent;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = themeColors.border;
+              e.currentTarget.style.color = themeColors.text;
+            }}
+          >
+            <span>🎯</span>
+            <span className="hidden sm:inline">Focus Mode</span>
+          </button>
+
           {/* Reading Preferences Toggle Button */}
           <button
             type="button"
@@ -1375,6 +1887,7 @@ export default function PDFReader({ source }: PDFReaderProps) {
           )}
         </div>
       </header>
+      )}
 
 
       {/* -------------------------------------------------------------------- */}
@@ -1463,7 +1976,7 @@ export default function PDFReader({ source }: PDFReaderProps) {
           style={{
             flex: 1,
             overflowY: "auto",
-            padding: "24px 16px 80px",
+            padding: focusMode ? "20px 16px 54px" : "24px 16px 80px",
             display: "flex",
             justifyContent: "center",
             alignItems: "flex-start",
@@ -1674,7 +2187,7 @@ export default function PDFReader({ source }: PDFReaderProps) {
         {/* ------------------------------------------------------------------ */}
         {/* Slide-out Notes Panel                                              */}
         {/* ------------------------------------------------------------------ */}
-        {notesPanelOpen && (
+        {notesPanelOpen && !focusMode && (
           <aside
             style={{
               width: 320,
@@ -2254,10 +2767,10 @@ export default function PDFReader({ source }: PDFReaderProps) {
       {/* -------------------------------------------------------------------- */}
       <footer
         style={{
-          height: 48,
+          height: focusMode ? 36 : 48,
           background: themeColors.toolbar,
           borderTop: `1px solid ${themeColors.border}`,
-          padding: "0 20px",
+          padding: focusMode ? "0 16px" : "0 20px",
           display: "flex",
           alignItems: "center",
           gap: 14,
