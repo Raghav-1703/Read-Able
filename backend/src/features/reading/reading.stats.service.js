@@ -175,9 +175,19 @@ const loadRawUserStats = (userId) => {
  */
 const saveRawUserStats = (userId, data) => {
   const filePath = getStatsFilePath(userId);
-  const tempPath = `${filePath}.${Date.now()}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
-  fs.renameSync(tempPath, filePath);
+  const tempPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+  try {
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), "utf8");
+    try {
+      fs.renameSync(tempPath, filePath);
+    } catch {
+      // Fallback for Windows EPERM / file lock
+      fs.copyFileSync(tempPath, filePath);
+      try { fs.unlinkSync(tempPath); } catch {}
+    }
+  } catch {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf8");
+  }
 };
 
 /**
